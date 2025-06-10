@@ -1,37 +1,46 @@
 package main
+
 import (
 	"fmt"
 	"net/http"
-	"io"
+	"os"
+	"strings"
+
+	"github.com/PuerkitoBio/goquery"
+
 )
 
-type pair struct{
-	x int
-	y error
-}
+func main() {
+	// Arg Count Check
+	if len(os.Args) <= 1 {
+		fmt.Println("Usage: go run main.go <URL>")
+		os.Exit(1)
+	}
 
-func server(){
-	go func(){
-		err := http.ListenAndServe(":8080",pair{})
-		fmt.Println(err)
-	}()
-	requestServer()
-}
+	// URL Validation
+	url := os.Args[1]
 
-func (p pair) ServeHTTP(w http.ResponseWriter, r *http.Request){
-	w.Write()([]byte("serve"))
-} 
+	isValidURL := strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
+	if !isValidURL {
+		fmt.Fprintf(os.Stderr, "Error: Invalid URL provided: %s\n", url)
+		fmt.Fprintf(os.Stderr, "URL must start with 'http://' or 'https://'")
+		os.Exit(1)
+	}
+	fmt.Println("Validated URL provided: ", url)
 
-func requestServer(){
-	resp, err := http.Get("http://localhost:8080")
-	fmt.Println(err)
+	resp, err := http.Get(url)
+
+	// Error checks
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching URL %s: %v\n", url, err)
+		os.Exit(1)
+	}
 	defer resp.Body.Close()
-	body,err := io.ReadAll(resp.Body)
-	fmt.Println("\nWebserver said: `%s`", string(body))
-}
 
+	if resp.StatusCode != http.StatusOK{
+		fmt.Fprintf(os.Stderr,"Error: Received non-200 status code %d for URL %s\n",resp.StatusCode,url)
+		os.Exit(1)
+	}
 
-
-func main(){
-	
+	fmt.Println("HTTP request successful (no network error). Status check & body processing needed.")
 }
