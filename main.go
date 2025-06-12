@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,7 +20,11 @@ func main() {
 	outputFlag := flag.String("output", "", "output file path(optional)")
 
 	flag.Parse()
+
+	//get flag values
 	target_url := *urlFlag
+	extractValue := *extractFlag
+	outputFilePath := *outputFlag
 
 	//validate the url flag
 	if target_url == "" {
@@ -45,25 +50,26 @@ func main() {
 	}
 	fmt.Printf("Base URL successfully parsed: %s\n", baseURL.String()) // Confirmation message
 
-	//value of extract flag
-	extractValue := *extractFlag
 	fmt.Printf("Extraction type set to: %s\\n", extractValue)
 
+	//determine output dest
 	var file *os.File
 	var fileErr error
+	var outputWriter io.Writer = os.Stdout
 
 	//value of output flag
-	outputFilePath := *outputFlag
 	if outputFilePath != "" {
 		fmt.Printf("Attempting to create/open output file: %s\n", outputFilePath)
-		file, fileErr := os.Create(outputFilePath)
 
+		file, fileErr = os.Create(outputFilePath)
 		if fileErr != nil {
 			fmt.Fprintf(os.Stderr, "Error: Could not create output file '%s': %v\n", outputFilePath, fileErr)
 			os.Exit(1)
 		}
 		fmt.Printf("Successfully opened file %s for writing.\n", outputFilePath)
 		defer file.Close()
+
+		outputWriter = file
 	} else {
 		fmt.Println("Output will be printed to the console.")
 	}
@@ -142,32 +148,43 @@ func main() {
 	}
 
 	//conditionally formatting output
-	var outputWriter *os.File = os.Stdout
-	if file != nil {
-		outputWriter = file
-	}
 
 	//links
 	if extractValue == "links" || extractValue == "all" {
 		fmt.Fprintln(outputWriter, "\\n--- Links ---")
 		if len(extractedLinks) > 0 {
 			for _, link := range extractedLinks {
-				fmt.Fprintln(outputWriter, link)
+				_, err := fmt.Fprintln(outputWriter, link)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to write link '%s' to output: %v\n", link, err)
+				}
 			}
 		} else {
-			fmt.Fprintln(outputWriter, "No links found or extracted.")
+			_, err := fmt.Fprintf(outputWriter, "No links found or extracted")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to write 'no links' message to output: %v\n", err)
+			}
 		}
 	}
 
 	//headers
 	if extractValue == "headers" || extractValue == "all" {
-		fmt.Fprintln(outputWriter, "\\n--- Headlines ---")
+		_, err := fmt.Fprintln(outputWriter, "\\n--- Headlines ---")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to write headlines header to output: %v\n", err)
+		}
 		if len(extractedHeaders) > 0 {
 			for _, header := range extractedHeaders {
-				fmt.Fprintln(outputWriter, header)
+				_, err := fmt.Fprintln(outputWriter, header)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to write headline '%s' to output: %v\n", header, err)
+				}
 			}
 		} else {
-			fmt.Fprintln(outputWriter, "No headlines found or extracted.")
+			_, err := fmt.Fprintln(outputWriter, "No headlines found or extracted.")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to write 'no headlines' message to output: %v\n", err)
+			}
 		}
 	}
 
