@@ -195,3 +195,5 @@ func main() {
 
 	fmt.Println("\nScraping process finished.")
 }
+
+//example - go run main.go -url https://github.com -extract all -output "report.txt"
