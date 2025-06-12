@@ -49,19 +49,33 @@ func main() {
 	extractValue := *extractFlag
 	fmt.Printf("Extraction type set to: %s\\n", extractValue)
 
+	var file *os.File
+	var fileErr error
+
 	//value of output flag
 	outputFilePath := *outputFlag
 	if outputFilePath != "" {
-		fmt.Printf("Output will be saved to file: %s\n", outputFilePath)
+		fmt.Printf("Attempting to create/open output file: %s\n", outputFilePath)
+		file,fileErr := os.Create(outputFilePath)
+
+		if fileErr!=nil{
+			fmt.Fprintf(os.Stderr, "Error: Could not create output file '%s': %v\n", outputFilePath, fileErr)
+			os.Exit(1)
+		}
+		fmt.Printf("Successfully opened file %s for writing.\n", outputFilePath)
+		defer file.Close()
 	} else {
 		fmt.Println("Output will be printed to the console.")
 	}
 	fmt.Println("Attempting to fetch URL", target_url)
 
 	// Error checks & GET request
-	resp, err := http.Get(target_url)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching URL %s: %v\n", target_url, err)
+	resp, httpErr := http.Get(target_url)
+	if httpErr != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching URL %s: %v\n", target_url, httpErr)
+		if file != nil{
+			file.Close()
+		}
 		os.Exit(1)
 	}
 	defer resp.Body.Close() // Schedule the closing
@@ -69,6 +83,9 @@ func main() {
 	//non success code
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error: Received non-200 status code %d for URL %s\n", resp.StatusCode, target_url)
+		if file!=nil{
+			file.Close()
+		}
 		os.Exit(1)
 	}
 
@@ -78,6 +95,9 @@ func main() {
 	doc, parseErr := goquery.NewDocumentFromReader(resp.Body)
 	if parseErr != nil {
 		fmt.Fprintf(os.Stderr, "Errror parsing HTML for %s: %v\\n", target_url, parseErr)
+		if file != nil{
+			file.Close()
+		}
 		os.Exit(1)
 	}
 
