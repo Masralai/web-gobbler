@@ -56,9 +56,9 @@ func main() {
 	outputFilePath := *outputFlag
 	if outputFilePath != "" {
 		fmt.Printf("Attempting to create/open output file: %s\n", outputFilePath)
-		file,fileErr := os.Create(outputFilePath)
+		file, fileErr := os.Create(outputFilePath)
 
-		if fileErr!=nil{
+		if fileErr != nil {
 			fmt.Fprintf(os.Stderr, "Error: Could not create output file '%s': %v\n", outputFilePath, fileErr)
 			os.Exit(1)
 		}
@@ -73,9 +73,6 @@ func main() {
 	resp, httpErr := http.Get(target_url)
 	if httpErr != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching URL %s: %v\n", target_url, httpErr)
-		if file != nil{
-			file.Close()
-		}
 		os.Exit(1)
 	}
 	defer resp.Body.Close() // Schedule the closing
@@ -83,9 +80,6 @@ func main() {
 	//non success code
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error: Received non-200 status code %d for URL %s\n", resp.StatusCode, target_url)
-		if file!=nil{
-			file.Close()
-		}
 		os.Exit(1)
 	}
 
@@ -95,9 +89,6 @@ func main() {
 	doc, parseErr := goquery.NewDocumentFromReader(resp.Body)
 	if parseErr != nil {
 		fmt.Fprintf(os.Stderr, "Errror parsing HTML for %s: %v\\n", target_url, parseErr)
-		if file != nil{
-			file.Close()
-		}
 		os.Exit(1)
 	}
 
@@ -141,7 +132,6 @@ func main() {
 		headerSelection.Each(func(index int, element *goquery.Selection) {
 			headerText := element.Text()
 			headerText = strings.TrimSpace(headerText) //trimming white spaces
-
 			if headerText != "" {
 				extractedHeaders = append(extractedHeaders, headerText)
 				fmt.Println(extractedHeaders)
@@ -152,27 +142,32 @@ func main() {
 	}
 
 	//conditionally formatting output
+	var outputWriter *os.File = os.Stdout
+	if file != nil {
+		outputWriter = file
+	}
+
 	//links
 	if extractValue == "links" || extractValue == "all" {
-		fmt.Println("\n--- Links ---")
+		fmt.Fprintln(outputWriter, "\\n--- Links ---")
 		if len(extractedLinks) > 0 {
 			for _, link := range extractedLinks {
-				fmt.Println(link)
+				fmt.Fprintln(outputWriter, link)
 			}
 		} else {
-			fmt.Println("No links found or extracted.")
+			fmt.Fprintln(outputWriter, "No links found or extracted.")
 		}
 	}
 
 	//headers
 	if extractValue == "headers" || extractValue == "all" {
-		fmt.Println("\n--- Headers ---")
+		fmt.Fprintln(outputWriter, "\\n--- Headlines ---")
 		if len(extractedHeaders) > 0 {
 			for _, header := range extractedHeaders {
-				fmt.Println(header)
+				fmt.Fprintln(outputWriter, header)
 			}
 		} else {
-			fmt.Println("No headlines found or extracted.")
+			fmt.Fprintln(outputWriter, "No headlines found or extracted.")
 		}
 	}
 
