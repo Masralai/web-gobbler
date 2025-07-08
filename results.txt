@@ -1,0 +1,270 @@
+
+--- Links ---
+https://roadmap.sh/courses/sql
+https://roadmap.sh/
+https://roadmap.sh/ai
+https://roadmap.sh/courses/sql
+https://roadmap.sh/projects
+https://roadmap.sh/best-practices
+https://roadmap.sh/questions
+https://roadmap.sh/guides
+https://youtube.com/@roadmapsh
+https://cottonbureau.com/people/roadmapsh
+https://roadmap.sh/advertise
+https://roadmap.sh/get-started
+https://roadmap.sh/roadmaps
+https://roadmap.sh/ai?format=roadmap
+https://roadmap.sh/community
+https://roadmap.sh/ai
+https://roadmap.sh/ai/chat
+https://roadmap.sh/ai/roadmap-chat
+https://roadmap.sh/teams
+https://roadmap.sh/login
+https://roadmap.sh/signup
+https://roadmap.sh/roadmaps
+https://roadmap.sh/ai
+https://roadmap.sh/guides
+https://roadmap.sh/account
+https://roadmap.sh/login
+https://roadmap.sh/signup
+https://roadmap.sh/questions/javascript#preparing-for-your-javascript-interview
+https://roadmap.sh/questions/javascript#test-with-flashcards
+https://roadmap.sh/questions/javascript#questions-list
+https://roadmap.sh/questions/javascript#core-concepts
+https://roadmap.sh/questions/javascript#functions
+https://roadmap.sh/questions/javascript#objects-and-prototypes
+https://roadmap.sh/questions/javascript#arrays
+https://roadmap.sh/questions/javascript#error-handling
+https://roadmap.sh/questions/javascript#advanced-concepts
+https://roadmap.sh/authors/ekene
+https://github.com/kamranahmedse/developer-roadmap/tree/master/src/data/question-groups/javascript
+https://roadmap.sh/javascript
+https://leetcode.com/
+https://www.hackerrank.com/
+https://roadmap.sh/react
+https://roadmap.sh/angular
+https://roadmap.sh/java
+https://roadmap.sh/java/vs-javascript
+https://roadmap.sh/java
+https://roadmap.sh/java/vs-javascript
+https://roadmap.sh/javascript
+http://roadmap.sh
+https://roadmap.sh/roadmaps
+https://roadmap.sh/best-practices
+https://roadmap.sh/guides
+https://roadmap.sh/videos
+https://roadmap.sh/about
+https://youtube.com/theroadmap?sub_confirmation=1
+https://roadmap.sh/
+https://x.com/kamrify
+https://roadmap.sh/terms
+https://roadmap.sh/privacy
+https://www.linkedin.com/company/roadmapsh
+https://youtube.com/theroadmap?sub_confirmation=1
+https://twitter.com/roadmapsh
+http://roadmapsh.bsky.social/
+https://thenewstack.io
+https://thenewstack.io/category/devops?utm_source=roadmap.sh&utm_medium=Referral&utm_campaign=Footer
+https://thenewstack.io/category/kubernetes?utm_source=roadmap.sh&utm_medium=Referral&utm_campaign=Footer
+https://thenewstack.io/category/cloud-native?utm_source=roadmap.sh&utm_medium=Referral&utm_campaign=Footer
+https://roadmap.sh/forgot-password
+https://roadmap.sh/signup
+https://roadmap.sh/terms
+https://roadmap.sh/privacy
+
+--- Headlines ---
+In this article
+Top 30 JavaScript Interview Questions and Answers
+Preparing for your JavaScript interview
+Test yourself with Flashcards
+Questions List
+Core Concepts
+How does Java differ from JavaScript?
+What are the various data types that exist in JavaScript?
+What is the difference between undefined and null in JavaScript?
+What is the use of the isNaN function?
+What are the conventions of naming a variable in JavaScript?
+What is a variable declaration, and how are var, let, and const keywords different?
+Explain the concept of global scope and local scope in JavaScript
+Explain the concept of the global object in JavaScript
+Explain the concept of hoisting in JavaScript with examples
+What is the purpose of the "this" keyword in JavaScript?
+What is the difference between the "==" and "===" operators in JavaScript?
+What would be the result of 10+2+"9"?
+Functions
+What are function declarations, and how are they different from function expressions?
+What is the difference between a "callback" function and a "higher-order" function, with examples
+What is an immediately invoked function expression (IIFE)? Provide an example
+How would you implement a JavaScript function to reverse a string?
+Write a JavaScript function to check if a number is even or odd
+Write a JavaScript function to check if a string contains a specific substring
+What is the rest parameter, and how does it work?
+What are arrow functions, and how do they differ from regular functions?
+Explain the concept of function scope with an example
+Objects and Prototypes
+Explain the concept of prototype inheritance in JavaScript
+How do you add a method to an object?
+How can you check if an object has a specific property?
+How do you define a constructor function in JavaScript?
+Write a JavaScript code snippet to create a new object using the Object.create() method
+Arrays
+How do you create an array in JavaScript?
+Explain the array prototype methods with an example
+How do you add or remove items from an array?
+What is a recursive function? Provide an example using arrays
+How do you loop through the items in an array?
+What are the different ways to clear an array in JavaScript?
+What are the different methods to remove duplicates from a JavaScript array?
+How would you use the spread operator to merge objects instead of arrays?
+What is the output of the following JavaScript code? const arr1 = [1,2,3]; const arr2 = [...arr1, 4, 5, 6]; console.log(arr2);
+Error Handling
+Explain the difference between a reference error and a syntax error with examples
+Explain a logical error with an example
+How do you log and monitor errors in a JavaScript application, especially in a production environment?
+Advanced concepts
+What is the Document Object Model (DOM)?
+How do you use CSS style selectors with JavaScript to manipulate an HTML element?
+Advanced concepts
+Differentiate between innerHTML and innerText
+Advanced concepts
+What is the difference between a window object and a document object in JavaScript?
+What is the Browser Object Model (BOM)?
+How do you use destructuring in JavaScript?
+What is asynchronous JavaScript, and how does it handle code execution?
+What is the purpose of the strict mode in JavaScript?
+Advanced concepts
+What are imports and exports in JavaScript?
+Advanced concepts
+What are the ways of adding JavaScript to an HTML file?
+Advanced concepts
+What are some popular JavaScript frameworks, and what are their primary use cases?
+Wrapping up
+
+--- Para(s) ---
+Ekene Eze  · 
+Improve this Guide
+JavaScript interviews can be rough, even for developers with years of experience. You’re expected to understand the language’s basics and more complex parts. Interviewers want to see how well you know the language and how you use it to solve problems. It’s a good idea to brush up on some common JavaScript interview questions before your interview.
+When preparing for a JavaScript interview, make sure you don’t just memorize everything. Instead, focus on developing a good understanding of the language and getting to know it inside and out. Start by learning the basics, e.g., variables, and then you can move on to more advanced topics like async/await. Doing this will help you analyze things better and use your knowledge in building web apps.
+In this guide, I’ll cover top JavaScript interview questions and answers to help you prepare well. I’ll cover basic syntax, data types, and advanced concepts like async/await. You’ll also find a collection of flashcards designed to help you practice and learn better. But if you want to research more on each topic or start learning about JavaScript, check out the JavaScript roadmap.
+Prepare for your JavaScript interview by keeping these tips in mind:
+You can either use these flashcards or jump to the questions list
+        section below to see them in a list format.
+How does Java differ from JavaScript?
+Java and JavaScript are different programming languages in terms of syntax and uses. Java is a programming language that Sun Microsystems created in the '90s and is now owned by Oracle. It is a general-purpose, object-oriented programming language often used for building software. Examples of this software include desktop, web apps, and mobile apps for Android.
+Java is also a statically typed language, meaning a variable's data type must be known at compile time. Before starting the program, you must understand what kind of data you're working with.
+In contrast, Brendan Eich created JavaScript, a scripting language, at Netscape in 1995. It is a dynamically typed language, meaning that a variable's data type is determined at runtime. You do not have to declare the data type of a variable before using it. Check out the guide on the differences between Java and JavaScript to learn more.
+If you prefer to see the questions in a list format, you can find them
+        below.
+Java and JavaScript are different programming languages in terms of syntax and uses. Java is a programming language that Sun Microsystems created in the '90s and is now owned by Oracle. It is a general-purpose, object-oriented programming language often used for building software. Examples of this software include desktop, web apps, and mobile apps for Android.
+Java is also a statically typed language, meaning a variable's data type must be known at compile time. Before starting the program, you must understand what kind of data you're working with.
+In contrast, Brendan Eich created JavaScript, a scripting language, at Netscape in 1995. It is a dynamically typed language, meaning that a variable's data type is determined at runtime. You do not have to declare the data type of a variable before using it. Check out the guide on the differences between Java and JavaScript to learn more.
+Primitive and non-primitive data types are the two main data types in JavaScript. Primitive data types are the main elements that make up all the data you work with in JavaScript. They are immutable, meaning you can't change their values once you create them. Also, they're stored in memory as single values. Some examples of primitive data types include:
+Non-primitive data types, also called reference data types, store groups of data or complex structures. They are mutable, meaning you can change their values once you create them. Unlike primitive data types, they're stored in memory as references rather than single values. Some examples of non-primitive data types include:
+Undefined variables are variables that the developer has declared but not yet assigned a value.
+A null variable is a variable or property that is empty. You use null variables when you want to show that a variable has no values or want to clear the value of a variable.
+You use the isNaN function to check when a value is "Not a Number." It attempts to convert the given value to a number and then checks if the result is a NaN. If the value is not a number, it'll return true, but if it is a number, it'll return false.
+The following are the naming conventions for variables in JavaScript:
+A variable declaration is when you create a variable to store a value in JavaScript. You give it a descriptive name, which you can then use to store or retrieve the value. In JavaScript, you use var, let, and const keywords to declare variables.
+Older versions of JavaScript used the var keyword to declare variables**.** Variables declared using the var keyword have a function scope. It lets you give variables the same name and a new value even in the same scope. However, it may result in confusion and errors, making debugging your code difficult.
+The let keyword is a new way to declare variables in JavaScript in ECMAScript 2015 (ES6). Variables declared using the let keyword have a block scope. You can change the value, but you can't use the same name for a variable in the same block scope. It helps make debugging code easier compared to the var keyword.
+The const keyword works as the let keyword since both are block-scoped. However, you cannot change the value or use the same name for a variable in the same scope.
+Global scope is all the variables you can access from anywhere in your JavaScript code. When you declare a variable outside of any function or block, it becomes a global variable. Using too many global variables can make your code difficult to read.
+In contrast, local scope is a variable you can only access within a function. When you declare a variable inside any function or block of code, it becomes a local ****variable. It helps to organize your JavaScript code, making it easier to read. When coding in JavaScript, try to use local scope variables instead of global scope variables as much as possible.
+Global objects are containers for the global scope and its properties, e.g., variables. You can access its properties from anywhere within your code. In a web browser, the global object is the "window," while in Node.js, it is "global."
+Hoisting is when a variable or function declaration gets moved to the top of its scope before the code runs. It means you can use a variable or function before you create (declare) it.
+In the example above, I used the variable "hoistedVariable" in the first console.log before creating it. Often, this would cause an error, but due to hoisting, it will show "undefined." The computer will move the variable creation var hoistedVariable to the top, but won't move the variable value. When I assign the value to the variable, the second console.log will show the correct answer.
+The "let" and "const" keywords don't work well with hoisting. Even though they're moved to the top of their scope, they don't get a value right away. It creates a "temporal dead zone" where you can't access the variables until they're declared (created). If you try to use "let" or "const" variables before declaring them, you'll get a "ReferenceError."
+The "this" keyword in JavaScript refers to the object or context on which a code runs. Examples of these codes include function calls, object methods, event handlers, and more. You use it to access the properties and methods of that object. The value of this keyword changes depending on how you use (or call) the function.
+When you use "this" in the context of a method, "this" indicates the object that owns the method. For standalone functions, "this" is the global object, but in strict mode it's undefined. Also, in event handlers, "this" refers to the element that caused the event.
+"==" and "===" are comparison operators, but they are different in how they treat type coercion. The "==" comparison operator checks if the values are the same, but doesn't care about the data type.
+The "===" comparison operator, on the other hand, checks if both the value and the data type are the same.
+JavaScript uses type coercion to convert values to the same type before operations. It'll first add both numbers 10 + 2 to get 12, and then try to add the number 12 to the string "9". Since you can't add a number and a string in JavaScript, it'll change the number 12 into a string "12," i.e., "12" + "9" = "129"
+A function declaration is a statement used to create functions in JavaScript. It starts with the function keyword followed by the function name and parameters. As long as you stick to the naming conventions, you can provide your function or parameters with any name you want. Also, function declarations are "hoisted," meaning you can call them before they're defined.
+A function expression is also a statement, defining a function as an expression. It starts with you declaring a variable such as let, const, or var, followed by an assignment operator (=), and it doesn't need a name (an anonymous function) unless you give it one. Also, they are not "hoisted," meaning you can only use them after you define them, or you'll get an error.
+A callback function is a function that one function gives to another as an argument (value). The second function then runs the callback function after it finishes its operation. Callbacks are often used with other functions to handle tasks like making API calls.
+In the example below, the sendMessage function is a callback function because it's given (passed) to the sendNow function to run the code later.
+Just like callbacks, higher-order functions also work with other functions. It takes another function as an argument or returns a function as a result. They're often used to handle tasks like controlling asynchronous operations.
+Immediately invoked function expressions, or IIFEs, run as soon as they're created. It creates a local scope for variables so they don't mess with other parts of the code. You make an IIFE by placing your code inside the parentheses (). Also, adding another set of parentheses () at the function's end will make it run immediately.
+You can reverse a string using the split(), reverse(), and join() method.
+One way to check if a number is even or odd is by creating a function using the modulus operator (%). It's a mathematical operation that helps find the remainder of a division problem.
+In the example below, the number used for the division is "2", which is already an even number. If the remainder of dividing a number by "2" is "0", then it's an even number. But if the remainder is not "0", it's an odd number.
+You can use different methods like search() or indexOf() to see if a string has a particular word. But I'll use the includes() method to check if a string contains a specific substring. It'll return "true" if the substring is present in the string and "false" if not.
+The rest parameter allows you to represent many arguments in an array. It's useful when you need a function to accept extra arguments beyond what you've listed.
+The "rest parameter" syntax consists of three dots (...) followed by the name of a parameter. Also, if you're using a rest parameter with other values, make sure it's the last one on the list.
+Arrow functions are a shorter way to write functions in JavaScript, which came out in ES6 2015. It uses an arrow (=>) symbol to define (create) a function instead of the function keyword. Arrow functions bind "this'' to the surrounding scope. This means they inherit the same meaning of the "this" keyword as the code around them. It makes it easier to work with variables, functions, objects, etc., outside the arrow function, but still accessible within it.
+Regular functions, on the other hand, bind the "this" keyword to the function itself. The "this" keyword changes based on how you call the function, but it can sometimes cause errors. For example, if you call a regular function as a method of an object, "this" will refer to that object. But if you call the same function as a standalone function, "this" will refer to the global object (usually the window object in a browser).
+In arrow functions, if there is only one expression, you can skip the curly braces {} and the return keyword. It makes your code cleaner and easier for you and external developers to read. If you have two or more expressions, use the return keyword and put your code in curly braces {}.
+Function scope refers to the scope of variables defined within a function. You can only access variable values within the scope and not outside. It helps to avoid having the same variable names and keeps your JavaScript code clean.
+Prototype inheritance is when objects can inherit properties and methods from other objects. Each item has a "prototype," i.e., the parent object. Whenever you want to use a property or method on an object, JavaScript first checks if it has it. If not, it looks at the object's prototype to see if it has it. If the prototype has it, then the object "inherits" it. This process continues until it finds the property it's looking for or hits the end of the prototype chain.
+For example, Date objects, like timestamps, inherit their properties and methods from the Date prototype. Math objects provide existing tools and features for math tasks, but do not rely on or inherit from a Math prototype. Array objects, like lists, get their features and actions from the Array prototype.
+Adding methods to an object allows you to keep your code organized and easy to reuse. One way to make this happen is by assigning a function to the object's property:
+There are different ways to check if an object has a specific property. The method you choose depends on what you want to check and why. I'll be using the Object.hasOwn method to check if an object has a property that belongs only to it, not to its parent or inherited prototype.
+A constructor function creates multiple objects with the same properties and methods. Using the "new" keyword with a constructor function creates a new object and sets "this" to that object.
+It's usually a good idea, but not required, to start the name of a constructor function with a capital letter. Doing this helps differentiate constructor functions from your regular functions and variables.
+To create a new object using Object.create() method, here's an example that demonstrates it in action
+You use array literals with square brackets [] to create JavaScript arrays.
+Array methods help you add, delete, or change elements (values) in an array. Some array methods to check out are:
+Adding or removing items from an array using the push() and pop() methods:
+A recursive function is a function that calls itself to solve a particular problem. It breaks down a big problem into smaller parts with each call and solves them one by one. The function has two main parts: the base case, which stops the repetition, and the recursive case, which repeats the steps until it reaches the base.
+Below is an example of looping through an array using the for loop method:
+There are several ways to clear an array in JavaScript. However, I'll focus on the three most common methods.
+You can use the filter(), reduce() method, and more to remove duplicates from an array. I'll be using the set() method as an example:
+The spread operator (...) allows you to merge objects through a function call or directly combine objects. Below is an example using a function call:
+A syntax error happens when you write code that the JavaScript engine can't understand, so your code won't run. It can be when you make a typo spelling a keyword or forget to close a bracket, parenthesis, or curly brace.
+A reference error occurs when you try to use a variable or a function that doesn't exist. The code will run, but it won't find what you're referencing since you didn't create the variable using let, var, and const keywords.
+A logical error is when your code runs without syntax or reference errors. But when it runs, it won't do what you want it to because of a mistake in how you wrote it.
+Suppose you're trying to add two numbers together in a function. But instead of using the plus sign, you use the multiplication sign by mistake. The code will still run, but you won't get your desired answer.
+Keeping track of errors in your JavaScript application is important, especially when it's up and running and people are using it. This will allow you to find and correct mistakes to make your application reliable and easier to use.
+These methods will help you keep tabs on what's happening with your application once it's in production:
+The DOM is a structured representation of a webpage's elements (HTML or XML page). Whenever an HTML page loads, the web browser creates a DOM for that page. It's a way for JavaScript to understand and change a webpage's content, layout, and style.
+The DOM represents the web page as a tree-like structure of objects. Each web page element, like paragraphs and images, becomes an object in this tree. JavaScript uses the DOM to manipulate these objects and make the webpage interactive.
+For example, imagine you're watching a JavaScript tutorial on YouTube that you enjoy and decide to click the "like" button. When you click the "like" button, the text changes to "unlike," and the like counter goes up. JavaScript accesses and changes the DOM to update the button's text from "like" to "unlike."
+There are several methods to manipulate HTML elements using CSS style selectors. But I'll be using the document.getElementById to style a paragraph element with an ID="styleP"
+innerHTML is what you use to get or change the HTML content of an element. It shows you the plain text and the HTML tags used to create the text. For example, if you have a paragraph with an italics tag, innerHTML will show the em tags in the final result.
+On the other hand, innerText gets or changes the plain text inside an element. It shows you the text on the page but not the HTML tags used to create the text.
+A window object represents the entire browser or tab. It controls everything on the page, from loading content to responding to your clicks. The window object is a topmost object that helps manage the browser window.
+In contrast, the document object is a window property. The document object represents the web page's content (HTML document) you're looking at in the browser, such as the text. It enables you to interact with, change, and style web elements such as paragraphs using methods like getElementById().
+The BOM is a set of tools that allows JavaScript to interact with the browser. It controls browser functionalities without needing to interact with the HTML document. You can open and close a browser window, access a browsing history, and more. Examples of the BOM include window, browser, and history objects.
+Destructuring lets you take out values from arrays or objects and put them into separate variables. It makes your code easier to read and reduces mistakes when writing code. You don't have to deal with extra variables; what you assign to each variable is obvious.
+Asynchronous JavaScript is a way of writing code that can carry out many tasks at once. It saves you time, especially when working on tasks that take effort, like fetching data from a server.
+Async JavaScript lets your code run at the same time as other tasks while waiting for it to complete. Your code doesn't stop and wait for a task to finish, but it keeps checking now and then to see if the task is complete. Once it's done, either a promise or a callback function responds to the result of the task.
+JavaScript's strict mode makes you follow strict rules (best practices) when writing code. It prevents common mistakes JavaScript often ignores, such as undeclared variables, and keeps your code safe. Add the string "use strict"; at the top of the JavaScript file or function to enable strict mode.
+Using "import" and "export" makes sharing code among many files easier. The "export" keyword shares code and data like variables, classes, and functions. On the other hand, the "import" keyword brings in these values, so you can use them in a different file.
+For example, you have two files called function.js and another file called app.js. app.js contains the original code you want to move to function.js using import and export.
+You'll need to create an HTML page and link it to function.js instead of app.js. This is because app.js contains the original code but cannot run on its own. Also, make sure to add function.js to the HTML with the type attribute set to "module" to prevent errors from occurring.
+You can add JavaScript to an HTML file in three ways: inline, internal, and external JavaScript. Internal JavaScript lets you add code inside the HTML markup file between <script> tags. You can place internal JavaScript code inside the <head> or <body> section.
+Internal JavaScript is great for small amounts of code and keeps everything in one place. But it can mess up your HTML markup file and make it hard to read, especially if you have a lot of code.
+Another method is to create an external file for your JavaScript. It lets you write your JavaScript code in a separate .js extension and link it to your HTML code file. You can link to the external JavaScript in your HTML's <head> or <body> section.
+Doing this keeps your HTML clean and lets you use the same JavaScript code in many HTML pages. The downside is that it means an extra HTTP request to load the JavaScript file, which might slow down how fast your page loads.
+For example, when you create a file called app.js, you'll include it like this:
+Inline JavaScript lets you place your JavaScript code into an HTML element's attribute. You can do this using an HTML element's attribute, like onclick, onsubmit, and onselect.
+Using inline JavaScript is suitable for fast and easy tasks. But it can make your HTML code difficult to read, especially if you have a lot of JavaScript code.
+Listed below are some common JavaScript frameworks and their uses:
+Learning JavaScript is a continuous process that requires regular practice, self-assessment, and dedication. By studying the JavaScript interview questions and answers above, you have made considerable progress in improving your skills and confidence.
+Feel free to mix it up during your study hours by asking different questions and using various scenarios. It'll make you feel more at ease and ready for whatever JavaScript interview questions you might see in actual interviews.
+Set aside time each day or week to practice coding problems, work on your projects, and study. Also, jot down notes, make summaries, or even teach someone else. Doing this will solidify your learning and show you where you need extra work.
+To improve at JavaScript and find more helpful resources, check out the JavaScript guide on roadmap.sh. It has valuable resources to help you learn and prepare for JavaScript interviews.
+Roadmaps Best Practices Guides Videos FAQs YouTube
+roadmap.sh  by  @kamrify @kamrify
+Community created roadmaps, best practices, projects, articles,
+          resources and journeys to help you choose your path and grow in your
+          career.
+© roadmap.sh
+· Terms · Privacy ·  
+    
+        
+    
+    
+        
+            
+        
+    
+      
+
+   Bluesky Streamline Icon: https://streamlinehq.comBluesky
+The top DevOps resource for Kubernetes, cloud-native computing, and
+          large-scale development and deployment.
+DevOps · Kubernetes · Cloud-Native
+Login or Signup
+You must be logged in to perform this action.
+Reset your password?

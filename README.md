@@ -85,7 +85,7 @@ The scraper organizes extracted data into clear sections:
 
 ### Links Section
 
-```
+```txt
 --- Links ---
 https://example.com/page1
 https://example.com/page2
@@ -94,7 +94,7 @@ https://external-site.com/resource
 
 ### Headers Section
 
-```
+```txt
 --- Headlines ---
 Welcome to Our Website
 Latest News

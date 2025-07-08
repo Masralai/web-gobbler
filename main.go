@@ -16,7 +16,7 @@ func main() {
 
 	//command line flags
 	urlFlag := flag.String("url", "", "URL to scrape")
-	extractFlag := flag.String("extract", "links", "Elements to extract (e.g., 'links', 'headlines', 'all')")
+	extractFlag := flag.String("extract", "links", "Elements to extract (e.g., 'links', 'headlines','para', 'all')")
 	outputFlag := flag.String("output", "", "output file path(optional)")
 
 	flag.Parse()
@@ -103,6 +103,7 @@ func main() {
 	//slices for extracts
 	extractedLinks := []string{}
 	extractedHeaders := []string{}
+	extractedPara := []string{}
 
 	//extract links if requested
 	if extractValue == "links" || extractValue == "all" {
@@ -147,11 +148,30 @@ func main() {
 		fmt.Printf("Successfully stored %d non-empty headline(s).\\n", len(extractedHeaders))
 	}
 
+	//extract paragraphs if requested
+	if extractValue == "para" || extractValue == "all" {
+		fmt.Println("Extracting Para(s)...")
+		paraSelection := doc.Find("p")
+		fmt.Printf("Found %d para(s) on the page.\n", paraSelection.Length())
+		fmt.Println("Iterating through found para(s) tags...")
+
+		paraSelection.Each(func(index int, element *goquery.Selection) {
+			paraText := element.Text()
+			paraText = strings.TrimSpace(paraText) //trimming white spaces
+			if paraText != "" {
+				extractedPara = append(extractedPara, paraText)
+				fmt.Println(extractedPara)
+			}
+		})
+		fmt.Println("Finished iterating through paragraph tags.")
+		fmt.Printf("Successfully stored %d non-empty para(s).\n", len(extractedPara))
+	}
+
 	//conditionally formatting output
 
 	//links
 	if extractValue == "links" || extractValue == "all" {
-		fmt.Fprintln(outputWriter, "\\n--- Links ---")
+		fmt.Fprintln(outputWriter, "\n--- Links ---")
 		if len(extractedLinks) > 0 {
 			for _, link := range extractedLinks {
 				_, err := fmt.Fprintln(outputWriter, link)
@@ -169,7 +189,7 @@ func main() {
 
 	//headers
 	if extractValue == "headers" || extractValue == "all" {
-		_, err := fmt.Fprintln(outputWriter, "\\n--- Headlines ---")
+		_, err := fmt.Fprintln(outputWriter, "\n--- Headlines ---")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to write headlines header to output: %v\n", err)
 		}
@@ -188,9 +208,30 @@ func main() {
 		}
 	}
 
-	if extractValue != "links" && extractValue != "headers" && extractValue != "all" {
+	//paragraphs
+		if extractValue == "para" || extractValue == "all" {
+		_, err := fmt.Fprintln(outputWriter, "\n--- Para(s) ---")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to write paragraphs to output: %v\n", err)
+		}
+		if len(extractedPara) > 0 {
+			for _, para := range extractedPara {
+				_, err := fmt.Fprintln(outputWriter, para)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to write paragraphs '%s' to output: %v\n", para, err)
+				}
+			}
+		} else {
+			_, err := fmt.Fprintln(outputWriter, "No paragraphs found or extracted.")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to write 'no paragraphs' message to output: %v\n", err)
+			}
+		}
+	}
+
+	if extractValue != "links" && extractValue != "headers" && extractValue !="para" && extractValue != "all" {
 		fmt.Fprintf(os.Stderr, "\\nWarning: Invalid value '%s' provided for -extract flag ", extractValue)
-		fmt.Fprintln(os.Stderr, "Valid options are 'links', 'headlines', or 'all'. No data extracted/printed.")
+		fmt.Fprintln(os.Stderr, "Valid options are 'links', 'headlines', 'para', or 'all'. No data extracted/printed.")
 	}
 
 	fmt.Println("\nScraping process finished.")
