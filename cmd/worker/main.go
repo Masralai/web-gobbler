@@ -16,6 +16,10 @@ import (
 	"github.com/Masralai/web-gobbler/internal/queue"
 	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/Masralai/web-gobbler/internal/store"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 )
@@ -245,6 +249,48 @@ func setupLogger(level string) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: l})))
 }
 
+func startMetricPublisher(ctx context.Context, q *queue.Queue, cloudwatchClient *cloudwatch.Client, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				depth, err := q.QueueDepth(ctx)
+				if err != nil {
+					slog.Debug("failed to get queue depth for cloudwatch", "error", err)
+					continue
+				}
+
+				_, err = cloudwatchClient.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+					Namespace: aws.String("GoScrape"),
+					MetricData: []types.MetricDatum{
+						{
+							MetricName: aws.String("scraper_queue_depth"),
+							Value:      aws.Float64(float64(depth)),
+							Unit:       types.StandardUnitCount,
+							Dimensions: []types.Dimension{
+								{
+									Name:  aws.String("Environment"),
+									Value: aws.String(getEnv("GOSCRAPE_ENVIRONMENT", "prod")),
+								},
+							},
+						},
+					},
+				})
+				if err != nil {
+					slog.Debug("failed to publish queue depth to cloudwatch", "error", err)
+				} else {
+					metrics.QueueDepth.Set(float64(depth))
+				}
+			}
+		}
+	}()
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -298,6 +344,15 @@ func main() {
 
 	pool.Run(ctx, concurrency)
 	slog.Info("all workers running", "count", concurrency)
+
+	awsCfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		slog.Warn("failed to load AWS config, CloudWatch metrics disabled", "error", err)
+	} else {
+		cwClient := cloudwatch.NewFromConfig(awsCfg)
+		startMetricPublisher(ctx, q, cwClient, 60*time.Second)
+		slog.Info("CloudWatch metric publisher started", "interval_sec", 60)
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
