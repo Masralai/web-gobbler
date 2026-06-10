@@ -131,7 +131,14 @@ func (wp *workerPool) processJob(ctx context.Context, logger *slog.Logger, paylo
 		return
 	}
 
-	maxRetries := wp.maxRetries
+	opts, maxRetries := wp.applyJobOptions(payload, wp.maxRetries)
+	result, err := wp.executeWithRetry(ctx, payload.URL, payload.Extract, &opts, maxRetries)
+	retriesUsed := calculateRetries(result, err)
+
+	wp.handleJobResult(ctx, jobID, log, result, err, retriesUsed)
+}
+
+func (wp *workerPool) applyJobOptions(payload *queue.JobPayload, maxRetries int) (scraper.ScrapeOptions, int) {
 	opts := wp.defaultOpts
 	if payload.Options != nil {
 		if payload.Options.TimeoutSeconds != nil {
@@ -144,57 +151,65 @@ func (wp *workerPool) processJob(ctx context.Context, logger *slog.Logger, paylo
 			opts.FollowRedirects = *payload.Options.FollowRedirects
 		}
 	}
+	return opts, maxRetries
+}
 
+func (wp *workerPool) executeWithRetry(ctx context.Context, url string, extract []string, opts *scraper.ScrapeOptions, maxRetries int) (*scraper.Result, error) {
 	var lastResult *scraper.Result
 	var lastErr error
-	retriesUsed := 0
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(100*(1<<(attempt-1))) * time.Millisecond
-			log.Warn("retrying", "attempt", attempt+1, "backoff_ms", backoff.Milliseconds(), "error", lastErr)
-			metrics.RetriesTotal.Inc()
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
-				log.Warn("context cancelled during backoff")
-				return
+				return nil, ctx.Err()
 			}
 		}
 
-		lastResult, lastErr = scraper.ScrapePage(ctx, payload.URL, payload.Extract, &opts)
+		lastResult, lastErr = scraper.ScrapePage(ctx, url, extract, opts)
 		if lastErr == nil {
 			break
 		}
-
-		retriesUsed = attempt + 1
 	}
 
-	if lastErr == nil {
+	return lastResult, lastErr
+}
+
+func calculateRetries(result *scraper.Result, err error) int {
+	if err == nil && result != nil {
+		return 0
+	}
+	return 1
+}
+
+func (wp *workerPool) handleJobResult(ctx context.Context, jobID uuid.UUID, log *slog.Logger, result *scraper.Result, err error, retriesUsed int) {
+	if err == nil {
 		log.Info("job completed",
-			"duration_ms", lastResult.DurationMs,
-			"http_status", lastResult.HTTPStatus,
-			"links", len(lastResult.Links),
-			"headers", len(lastResult.Headers),
-			"paragraphs", len(lastResult.Paragraphs),
+			"duration_ms", result.DurationMs,
+			"http_status", result.HTTPStatus,
+			"links", len(result.Links),
+			"headers", len(result.Headers),
+			"paragraphs", len(result.Paragraphs),
 			"retries_used", retriesUsed,
 		)
 
-		if err := wp.store.UpdateJob(ctx, jobID, store.JobStatusCompleted, lastResult, nil, retriesUsed); err != nil {
+		if err := wp.store.UpdateJob(ctx, jobID, store.JobStatusCompleted, result, nil, retriesUsed); err != nil {
 			log.Error("failed to update job as completed", "error", err)
 		}
 
 		metrics.JobsTotal.WithLabelValues("completed").Inc()
-		metrics.JobDuration.WithLabelValues("all").Observe(float64(lastResult.DurationMs))
+		metrics.JobDuration.WithLabelValues("all").Observe(float64(result.DurationMs))
 	} else {
 		var partial *scraper.Result
-		if lastResult != nil {
+		if result != nil {
 			partial = &scraper.Result{
-				HTTPStatus: lastResult.HTTPStatus,
-				DurationMs: lastResult.DurationMs,
+				HTTPStatus: result.HTTPStatus,
+				DurationMs: result.DurationMs,
 			}
 		}
-		errMsg := lastErr.Error()
+		errMsg := err.Error()
 
 		log.Error("job failed",
 			"error", errMsg,
@@ -206,7 +221,7 @@ func (wp *workerPool) processJob(ctx context.Context, logger *slog.Logger, paylo
 		}
 
 		metrics.JobsTotal.WithLabelValues("failed").Inc()
-		if errors.Is(lastErr, scraper.ErrHTTPFailed) {
+		if errors.Is(err, scraper.ErrHTTPFailed) {
 			metrics.HTTPErrorsTotal.WithLabelValues("http_failed").Inc()
 		}
 	}
