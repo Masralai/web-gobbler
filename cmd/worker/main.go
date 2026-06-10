@@ -1,3 +1,7 @@
+// Command worker starts the background worker pool, connects to PostgreSQL and Redis,
+// spawns N concurrent goroutines that dequeue jobs from Redis, scrape pages, and persist
+// results. If AWS credentials are available it also publishes queue depth to CloudWatch
+// every 60 seconds for auto-scaling. Blocks until SIGINT/SIGTERM.
 package main
 
 import (

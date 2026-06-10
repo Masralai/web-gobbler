@@ -1,3 +1,6 @@
+// Command api starts the Gin HTTP server, connects to PostgreSQL and Redis,
+// wires middleware (recovery, security headers, body size limit, logging, rate limiting),
+// registers all REST API routes, and blocks until SIGINT/SIGTERM.
 package main
 
 import (
