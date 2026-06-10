@@ -4,23 +4,28 @@ Distributed web scraping service built with Go (Gin), Redis, PostgreSQL, and Doc
 
 Submit scraping jobs via HTTP, process them asynchronously through a worker pool, and retrieve results via a REST API. Horizontally scalable on AWS ECS Fargate.
 
+> [!TIP]
+> **Get started in 2 commands:**
+> ```bash
+> docker compose up -d
+> curl http://localhost:8080/api/v1/health
+> ```
+
 ## Architecture
 
+```mermaid
+flowchart LR
+    Client -->|POST /scrape| API[Gin REST API]
+    API -->|enqueue job| Redis[(Redis Job Queue)]
+    Worker[Worker Pool<br/>goroutines] -->|dequeue job| Redis
+    Worker -->|persist result| PG[(PostgreSQL)]
+    API -->|GET /jobs/:id| PG
+    PG -->|metrics| Prom[Prometheus]
+    Prom -->|dashboard| Graf[Grafana]
 ```
-Client
-  │
-  ▼
-Gin REST API  ──── POST /scrape ────►  Redis Job Queue
-  │                                        │
-  │◄─── GET /jobs/:id ────────────────     │
-  │                                    Worker Pool (goroutines)
-  │                                        │
-  ▼                                        ▼
-PostgreSQL  ◄──────────── persist results & job status
-  │
-  ▼
-Prometheus ──► Grafana dashboard
-```
+
+> [!NOTE]
+> Jobs flow: HTTP 202 accepted → enqueued in Redis → picked up by a worker → result persisted to PostgreSQL. All workers share the same queue and coordinate via Redis.
 
 ## Features
 
@@ -31,6 +36,8 @@ Prometheus ──► Grafana dashboard
 - Metrics — Prometheus counters/histograms/gauges, Grafana dashboard
 - Pagination — list jobs with status filtering and pagination
 - Health checks — liveness/readiness with DB + Redis status
+- SSRF protection — private IP ranges blocked, max 5 redirects enforced
+- Security hardening — body size limit (1 MB), security headers, sentinel errors
 - Production-ready — distroless Docker images, Terraform for AWS, CI/CD
 
 ## Local development
@@ -47,6 +54,9 @@ docker compose up -d
 ```
 
 This starts: API (port 8080), worker, PostgreSQL (5432), Redis (6379), Prometheus (9090), Grafana (3000).
+
+> [!WARNING]
+> Ports 8080, 5432, 6379, 9090, and 3000 must be free on the host. Run `docker compose ps` to verify all services are healthy.
 
 ### Verify
 
@@ -86,6 +96,11 @@ Submit a scraping job.
 }
 ```
 
+| Status | Description |
+|--------|-------------|
+| `202 Accepted` | Job queued — returns `job_id` and `poll_url` |
+| `400 Bad Request` | Invalid URL, extract type, or option bounds |
+
 Response `202 Accepted`:
 ```json
 {
@@ -99,6 +114,11 @@ Response `202 Accepted`:
 ### GET /jobs/:id
 
 Poll job status and retrieve results.
+
+| Status | Description |
+|--------|-------------|
+| `200 OK` | Job found — returns status, results, or error |
+| `404 Not Found` | Invalid or unknown job ID |
 
 Response `200 OK` — completed:
 ```json
@@ -135,13 +155,18 @@ Response `200 OK` — failed:
 }
 ```
 
-Response `404` — job not found.
+> [!TIP]
+> Poll the `poll_url` returned in the `POST /scrape` response every 2-3 seconds until the status changes from `queued`/`processing` to `completed` or `failed`.
 
 ### GET /jobs
 
 List jobs with pagination and optional status filter.
 
-Query params: `page` (default 1), `limit` (default 20, max 100), `status` (queued|processing|completed|failed)
+**Query params:** `page` (default 1), `limit` (default 20, max 100), `status` (queued|processing|completed|failed)
+
+| Status | Description |
+|--------|-------------|
+| `200 OK` | Returns paginated job list |
 
 Response `200 OK`:
 ```json
@@ -163,30 +188,42 @@ Response `200 OK`:
 
 ### DELETE /jobs/:id
 
-Cancel a queued job. No-op if already processing or done.
+Cancel a queued job.
+
+| Status | Description |
+|--------|-------------|
+| `200 OK` | Job cancelled |
+| `409 Conflict` | Job cannot be cancelled (already processing or done) |
+| `404 Not Found` | Invalid or unknown job ID |
 
 Response `200 OK`: `{"status": "cancelled"}`
-Response `409 Conflict`: job cannot be cancelled
-Response `404`: job not found
 
 ### GET /health
 
 Liveness and readiness check.
+
+| Status | Description |
+|--------|-------------|
+| `200 OK` | All dependencies reachable |
+| `503 Service Unavailable` | DB or Redis unreachable |
 
 Response `200 OK`:
 ```json
 {"status":"ok","db":"ok","redis":"ok","version":"1.0.0"}
 ```
 
-Response `503` if DB or Redis is unreachable:
+Response `503`:
 ```json
-{"status":"degraded","db":"error: connection refused","redis":"ok","version":"1.0.0"}
+{"status":"degraded","db":"degraded","redis":"ok","version":"1.0.0"}
 ```
+
+> [!IMPORTANT]
+> Error details are logged server-side only. The health endpoint returns generic `"degraded"` status to avoid leaking internal state.
 
 ## Running tests
 
 ```bash
-# Unit tests (34 tests across scraper + API handlers)
+# Unit tests (33 tests across scraper + API handlers)
 go test -race -cover ./...
 
 # Integration tests (requires Docker for PostgreSQL + Redis containers)
@@ -196,7 +233,13 @@ docker compose down
 
 # Load tests (requires k6: brew install k6)
 k6 run test/load/scenario.js
+
+# Vulnerability check
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
+
+> [!NOTE]
+> Integration tests use testcontainers-go and spin up real PostgreSQL + Redis containers. Ensure Docker is running and the `integration` build tag is set.
 
 ## Production deployment
 
@@ -220,18 +263,22 @@ terraform apply
 
 This provisions VPC, RDS PostgreSQL, ElastiCache Redis, ECR repositories, ECS Fargate cluster with API and worker services, ALB, and auto-scaling.
 
+> [!WARNING]
+> Terraform creates real AWS resources. Review the plan carefully before applying. Estimated monthly cost: ~$60–100 for the full stack.
+
 ### CI/CD
 
 Push to `main` triggers the GitHub Actions pipeline:
 
 1. Lint and vet
-2. Unit tests
-3. Integration tests
-4. Build Docker images (api + worker)
-5. Push to ECR
-6. Register new ECS task definitions
-7. Rolling deploy (api → worker)
-8. Health check
+2. Vulnerability check (govulncheck)
+3. Unit tests
+4. Integration tests
+5. Build Docker images (api + worker)
+6. Push to ECR
+7. Register new ECS task definitions
+8. Rolling deploy (api → worker)
+9. Health check
 
 ### Required GitHub secrets
 
@@ -243,17 +290,37 @@ Push to `main` triggers the GitHub Actions pipeline:
 
 ## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | API server port |
-| `DATABASE_URL` | `postgresql://user:pass@localhost:5432/goscrape` | PostgreSQL connection string |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
-| `WORKER_CONCURRENCY` | `5` | Goroutines per worker |
-| `DEFAULT_TIMEOUT_SEC` | `10` | HTTP timeout for scrapers |
-| `DEFAULT_MAX_RETRIES` | `3` | Max retry attempts per job |
-| `SCRAPER_RATE_LIMIT` | `2` | Per-domain requests per second |
-| `LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARN, ERROR) |
-| `GOSCRAPE_ENVIRONMENT` | `prod` | Environment label for CloudWatch metrics |
+### Server
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `PORT` | `8080` | No | API server port |
+| `LOG_LEVEL` | `INFO` | No | Log level (DEBUG, INFO, WARN, ERROR) |
+
+### Database & Queue
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `DATABASE_URL` | — | **Yes** | PostgreSQL connection string |
+| `REDIS_URL` | — | **Yes** | Redis connection string |
+
+> [!WARNING]
+> `DATABASE_URL` and `REDIS_URL` have no defaults. The server will exit immediately if either is unset. Never hardcode credentials.
+
+### Scraper
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `DEFAULT_TIMEOUT_SEC` | `10` | No | HTTP timeout for scrapers |
+| `DEFAULT_MAX_RETRIES` | `3` | No | Max retry attempts per job |
+| `SCRAPER_RATE_LIMIT` | `2` | No | Per-domain requests per second |
+| `WORKER_CONCURRENCY` | `5` | No | Goroutines per worker |
+
+### Observability
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `GOSCRAPE_ENVIRONMENT` | `prod` | No | Environment label for CloudWatch metrics |
 
 ## Project structure
 
@@ -276,4 +343,3 @@ Push to `main` triggers the GitHub Actions pipeline:
 ├── .github/workflows/   CI/CD pipeline
 ├── docker-compose.yml   Local development environment
 └── README.md
-```
