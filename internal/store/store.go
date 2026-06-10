@@ -133,14 +133,19 @@ func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (*Job, error) {
 	return &job, nil
 }
 
-func (s *Store) UpdateJob(ctx context.Context, id uuid.UUID, status JobStatus, result *scraper.Result, errorMsg *string) error {
+func (s *Store) UpdateJob(ctx context.Context, id uuid.UUID, status JobStatus, result *scraper.Result, errorMsg *string, retriesUsed int) error {
 	var httpStatus *int
 	var durationMs *int64
 	var completedAt *time.Time
+	var retries *int
 
 	if result != nil {
 		httpStatus = &result.HTTPStatus
 		durationMs = &result.DurationMs
+	}
+
+	if status == JobStatusFailed || status == JobStatusCompleted {
+		retries = &retriesUsed
 	}
 
 	now := time.Now()
@@ -156,10 +161,11 @@ func (s *Store) UpdateJob(ctx context.Context, id uuid.UUID, status JobStatus, r
 		     error_msg = CASE WHEN $3::TEXT IS NOT NULL THEN $3 ELSE error_msg END,
 		     http_status = CASE WHEN $4::INT IS NOT NULL THEN $4 ELSE http_status END,
 		     duration_ms = CASE WHEN $5::INT IS NOT NULL THEN $5 ELSE duration_ms END,
-		     completed_at = CASE WHEN $6::TIMESTAMPTZ IS NOT NULL THEN $6 ELSE completed_at END,
-		     updated_at = $7
-		 WHERE id = $8`,
-		status, resultToJSON(result), errorMsg, httpStatus, durationMs, completedAt, now, id,
+		     retries_used = CASE WHEN $6::INT IS NOT NULL THEN $6 ELSE retries_used END,
+		     completed_at = CASE WHEN $7::TIMESTAMPTZ IS NOT NULL THEN $7 ELSE completed_at END,
+		     updated_at = $8
+		 WHERE id = $9`,
+		status, resultToJSON(result), errorMsg, httpStatus, durationMs, retries, completedAt, now, id,
 	)
 	if err != nil {
 		return fmt.Errorf("update job %s: %w", id, err)
