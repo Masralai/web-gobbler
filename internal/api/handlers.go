@@ -286,11 +286,11 @@ func jobToResponse(job *store.Job) JobResponse {
 		resp.Results = job.Result
 		if job.Result != nil {
 			resp.Meta = &JobMeta{
-				LinksCount:    len(job.Result.Links),
-				HeadersCount:  len(job.Result.Headers),
+				LinksCount:      len(job.Result.Links),
+				HeadersCount:    len(job.Result.Headers),
 				ParagraphsCount: len(job.Result.Paragraphs),
-				HTTPStatus:    job.Result.HTTPStatus,
-				RetriesUsed:   job.RetriesUsed,
+				HTTPStatus:      job.Result.HTTPStatus,
+				RetriesUsed:     job.RetriesUsed,
 			}
 		}
 	case store.JobStatusFailed:

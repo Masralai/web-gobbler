@@ -97,9 +97,9 @@ func TestStoreCreateAndGetJob(t *testing.T) {
 
 	timeout := 15
 	job := &store.Job{
-		URL:       "https://example.com",
-		Extract:   []string{"links", "headers"},
-		Options:   &store.JobOptions{TimeoutSeconds: &timeout},
+		URL:     "https://example.com",
+		Extract: []string{"links", "headers"},
+		Options: &store.JobOptions{TimeoutSeconds: &timeout},
 	}
 
 	id, err := testStore.CreateJob(ctx, job)

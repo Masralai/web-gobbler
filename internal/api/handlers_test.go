@@ -212,14 +212,14 @@ func TestHandleGetJob_200_completed(t *testing.T) {
 				t.Errorf("expected id %v, got %v", id, got)
 			}
 			return &store.Job{
-				ID:        id,
-				URL:       "https://example.com",
-				Extract:   []string{"links"},
-				Status:    store.JobStatusCompleted,
-				CreatedAt: now,
-				UpdatedAt: now,
+				ID:          id,
+				URL:         "https://example.com",
+				Extract:     []string{"links"},
+				Status:      store.JobStatusCompleted,
+				CreatedAt:   now,
+				UpdatedAt:   now,
 				CompletedAt: &completed,
-				DurationMs: &durationMs,
+				DurationMs:  &durationMs,
 				Result: &scraper.Result{
 					Links:      []string{"https://example.com/about"},
 					Headers:    []string{"Welcome"},

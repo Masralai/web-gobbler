@@ -38,19 +38,19 @@ type JobOptions struct {
 }
 
 type Job struct {
-	ID          uuid.UUID        `json:"id"`
-	URL         string           `json:"url"`
-	Extract     []string         `json:"extract"`
-	Options     *JobOptions      `json:"options,omitempty"`
-	Status      JobStatus        `json:"status"`
-	Result      *scraper.Result  `json:"result,omitempty"`
-	ErrorMsg    *string          `json:"error_msg,omitempty"`
-	HTTPStatus  *int             `json:"http_status,omitempty"`
-	RetriesUsed int              `json:"retries_used"`
-	DurationMs  *int64           `json:"duration_ms,omitempty"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
-	CompletedAt *time.Time       `json:"completed_at,omitempty"`
+	ID          uuid.UUID       `json:"id"`
+	URL         string          `json:"url"`
+	Extract     []string        `json:"extract"`
+	Options     *JobOptions     `json:"options,omitempty"`
+	Status      JobStatus       `json:"status"`
+	Result      *scraper.Result `json:"result,omitempty"`
+	ErrorMsg    *string         `json:"error_msg,omitempty"`
+	HTTPStatus  *int            `json:"http_status,omitempty"`
+	RetriesUsed int             `json:"retries_used"`
+	DurationMs  *int64          `json:"duration_ms,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 }
 
 var (
