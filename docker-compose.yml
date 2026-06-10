@@ -25,5 +25,23 @@ services:
       timeout: 3s
       retries: 5
 
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      DATABASE_URL: postgresql://user:pass@postgres:5432/goscrape
+      REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: "5"
+      DEFAULT_TIMEOUT_SEC: "10"
+      DEFAULT_MAX_RETRIES: "3"
+      SCRAPER_RATE_LIMIT: "2"
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
