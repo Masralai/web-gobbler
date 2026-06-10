@@ -28,3 +28,26 @@ func parseResultJSON(s *string) *scraper.Result {
 	}
 	return &r
 }
+
+func optionsToJSON(o *JobOptions) *string {
+	if o == nil {
+		return nil
+	}
+	data, err := json.Marshal(o)
+	if err != nil {
+		return nil
+	}
+	s := string(data)
+	return &s
+}
+
+func parseOptionsJSON(s *string) *JobOptions {
+	if s == nil || *s == "" {
+		return nil
+	}
+	var o JobOptions
+	if err := json.Unmarshal([]byte(*s), &o); err != nil {
+		return nil
+	}
+	return &o
+}

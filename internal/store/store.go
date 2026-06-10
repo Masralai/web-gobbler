@@ -125,6 +125,7 @@ func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (*Job, error) {
 	}
 
 	job.Result = parseResultJSON(resultJSON)
+	job.Options = parseOptionsJSON(optsJSON)
 	job.ErrorMsg = errorMsg
 	job.HTTPStatus = httpStatus
 	job.DurationMs = durationMs
@@ -233,6 +234,7 @@ func (s *Store) ListJobs(ctx context.Context, page, limit int, statusFilter stri
 			return nil, 0, fmt.Errorf("scan job row: %w", err)
 		}
 		job.Result = parseResultJSON(resultJSON)
+		job.Options = parseOptionsJSON(optsJSON)
 		job.ErrorMsg = errorMsg
 		job.HTTPStatus = httpStatus
 		job.DurationMs = durationMs
