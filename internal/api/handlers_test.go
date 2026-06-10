@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Masralai/web-gobbler/internal/metrics"
 	"github.com/Masralai/web-gobbler/internal/queue"
 	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/Masralai/web-gobbler/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type mockStore struct {
@@ -596,5 +598,46 @@ func TestHandleScrape_queueError_returns_500(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestHandleScrape_metrics(t *testing.T) {
+	ms := &mockStore{
+		createJobFunc: func(ctx context.Context, job *store.Job) (uuid.UUID, error) {
+			return uuid.New(), nil
+		},
+	}
+	mq := &mockQueue{
+		enqueueFunc: func(ctx context.Context, payload queue.JobPayload) error {
+			return nil
+		},
+		queueDepthFunc: func(ctx context.Context) (int64, error) {
+			return 5, nil
+		},
+	}
+
+	beforeQueued := testutil.ToFloat64(metrics.JobsTotal.WithLabelValues("queued"))
+
+	h := NewHandler(ms, mq, 10, 3)
+	r := setupTestRouter(h)
+
+	body := `{"url":"https://example.com","extract":["links"]}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/scrape", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", w.Code)
+	}
+
+	afterQueued := testutil.ToFloat64(metrics.JobsTotal.WithLabelValues("queued"))
+	afterDepth := testutil.ToFloat64(metrics.QueueDepth)
+
+	if afterQueued-beforeQueued != 1 {
+		t.Errorf("expected JobsTotal{queued} to increment by 1, got delta %f", afterQueued-beforeQueued)
+	}
+	if afterDepth != 5 {
+		t.Errorf("expected QueueDepth to be 5, got %f", afterDepth)
 	}
 }

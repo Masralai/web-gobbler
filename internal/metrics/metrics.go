@@ -32,7 +32,3 @@ var (
 		Help: "Total HTTP errors by type",
 	}, []string{"error_type"})
 )
-
-func Register(r *prometheus.Registry) {
-	r.MustRegister(JobsTotal, JobDuration, RetriesTotal, QueueDepth, HTTPErrorsTotal)
-}

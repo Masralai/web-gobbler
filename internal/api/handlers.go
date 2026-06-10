@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Masralai/web-gobbler/internal/metrics"
 	"github.com/Masralai/web-gobbler/internal/queue"
 	"github.com/Masralai/web-gobbler/internal/store"
 	"github.com/gin-gonic/gin"
@@ -94,6 +95,7 @@ func (h *Handler) HandleScrape(c *gin.Context) {
 
 	if d, err := h.queue.QueueDepth(c.Request.Context()); err == nil {
 		slog.Debug("queue depth after enqueue", "depth", d)
+		metrics.QueueDepth.Set(float64(d))
 	}
 
 	payload := queue.JobPayload{
@@ -107,6 +109,8 @@ func (h *Handler) HandleScrape(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "failed to queue job"})
 		return
 	}
+
+	metrics.JobsTotal.WithLabelValues("queued").Inc()
 
 	pollURL := "/api/v1/jobs/" + id.String()
 	c.JSON(http.StatusAccepted, JobResponse{
