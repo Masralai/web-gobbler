@@ -4,9 +4,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	os.Setenv("SCRAPER_ALLOW_PRIVATE_IPS", "1")
+	os.Exit(m.Run())
+}
 
 const testHTML = `<!DOCTYPE html>
 <html>
