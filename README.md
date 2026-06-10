@@ -1,4 +1,8 @@
-# GoScrape API
+# Web Gobbler
+
+[![Go Report Card](https://goreportcard.com/badge/github.com/Masralai/web-gobbler)](https://goreportcard.com/report/github.com/Masralai/web-gobbler)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/Masralai/web-gobbler)](https://golang.org/dl/)
 
 Distributed web scraping service built with Go (Gin), Redis, PostgreSQL, and Docker.
 
@@ -6,6 +10,7 @@ Submit scraping jobs via HTTP, process them asynchronously through a worker pool
 
 > [!TIP]
 > **Get started in 2 commands:**
+>
 > ```bash
 > docker compose up -d
 > curl http://localhost:8080/api/v1/health
@@ -102,6 +107,7 @@ Submit a scraping job.
 | `400 Bad Request` | Invalid URL, extract type, or option bounds |
 
 Response `202 Accepted`:
+
 ```json
 {
   "job_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
@@ -121,6 +127,7 @@ Poll job status and retrieve results.
 | `404 Not Found` | Invalid or unknown job ID |
 
 Response `200 OK` — completed:
+
 ```json
 {
   "job_id": "f47ac10b-...",
@@ -145,6 +152,7 @@ Response `200 OK` — completed:
 ```
 
 Response `200 OK` — failed:
+
 ```json
 {
   "job_id": "f47ac10b-...",
@@ -169,6 +177,7 @@ List jobs with pagination and optional status filter.
 | `200 OK` | Returns paginated job list |
 
 Response `200 OK`:
+
 ```json
 {
   "jobs": [
@@ -208,11 +217,13 @@ Liveness and readiness check.
 | `503 Service Unavailable` | DB or Redis unreachable |
 
 Response `200 OK`:
+
 ```json
 {"status":"ok","db":"ok","redis":"ok","version":"1.0.0"}
 ```
 
 Response `503`:
+
 ```json
 {"status":"degraded","db":"degraded","redis":"ok","version":"1.0.0"}
 ```
@@ -324,7 +335,7 @@ Push to `main` triggers the GitHub Actions pipeline:
 
 ## Project structure
 
-```
+```dir
 ├── cmd/
 │   ├── api/             main.go — Gin server entrypoint
 │   └── worker/          main.go — Worker pool entrypoint
