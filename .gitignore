@@ -1,1 +1,35 @@
+# ── Go ──
+api
+worker
+*.out
+*.test
+*.exe
+go.work
+go.work.sum
+
+# ── Terraform ──
+*.tfstate
+*.tfstate.backup
+*.tfvars
+crash.log
+crash.*.log
+.terraform/
+override.tf
+override.tf.json
+terraform.rc
+.terraformrc
+
+# ── Environment ──
+.env
+.env.local
+.env.production
+
+# ── IDE & OS ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 *.md

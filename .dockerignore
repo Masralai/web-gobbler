@@ -1,0 +1,8 @@
+.git/
+.gitignore
+terraform/
+docker-compose.yml
+*.md
+*.tfstate
+*.tfstate.backup
+.terraform/
