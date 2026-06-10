@@ -1,3 +1,9 @@
+// Package scraper provides the core web scraping engine.
+// It fetches HTML pages over HTTP, parses the DOM with goquery,
+// and extracts content (links, headers, paragraphs) from the response.
+// SSRF protection is enforced by rejecting targets that resolve to
+// private or loopback IP ranges. Redirect chains are followed up to
+// a maximum of 5 hops, with each redirect target also SSRF-checked.
 package scraper
 
 import (
@@ -16,11 +22,17 @@ import (
 )
 
 var (
-	ErrInvalidURL    = errors.New("invalid URL: must be http:// or https://")
-	ErrHTTPFailed    = errors.New("HTTP request failed with non-2xx status")
-	ErrParseFailure  = errors.New("failed to parse response body")
-	ErrTimeout       = errors.New("request timed out")
-	ErrPrivateIP     = errors.New("request refused: target resolves to a private IP")
+	// ErrInvalidURL is returned when the provided URL does not use http:// or https://.
+	ErrInvalidURL = errors.New("invalid URL: must be http:// or https://")
+	// ErrHTTPFailed is returned when the server responds with a non-2xx status code.
+	ErrHTTPFailed = errors.New("HTTP request failed with non-2xx status")
+	// ErrParseFailure is returned when the response body cannot be parsed as HTML.
+	ErrParseFailure = errors.New("failed to parse response body")
+	// ErrTimeout is returned when the HTTP request exceeds the configured timeout.
+	ErrTimeout = errors.New("request timed out")
+	// ErrPrivateIP is returned when the target hostname resolves to a private or loopback IP range.
+	ErrPrivateIP = errors.New("request refused: target resolves to a private IP")
+	// ErrTooManyRedirects is returned when the redirect chain exceeds the maximum allowed hops (5).
 	ErrTooManyRedirects = errors.New("too many redirects")
 )
 
@@ -47,14 +59,16 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
+// ScrapeOptions controls HTTP client behaviour for a single scrape request.
 type ScrapeOptions struct {
-	Timeout        time.Duration
-	MaxRetries     int
+	Timeout         time.Duration
+	MaxRetries      int
 	FollowRedirects bool
-	MaxBodySize    int64
-	UserAgent      string
+	MaxBodySize     int64
+	UserAgent       string
 }
 
+// Result holds the content and metadata extracted from a single scraped page.
 type Result struct {
 	Links      []string `json:"links"`
 	Headers    []string `json:"headers"`
@@ -63,6 +77,8 @@ type Result struct {
 	DurationMs int64    `json:"duration_ms"`
 }
 
+// DefaultOptions returns ScrapeOptions populated with sensible defaults:
+// 10-second timeout, up to 3 retries, redirects enabled, 5 MB max body, GoScrape/1.0 user-agent.
 func DefaultOptions() *ScrapeOptions {
 	return &ScrapeOptions{
 		Timeout:         10 * time.Second,
@@ -73,6 +89,13 @@ func DefaultOptions() *ScrapeOptions {
 	}
 }
 
+// ScrapePage fetches the page at rawURL, parses the HTML, and extracts content
+// matching extractTypes ("links", "headers", "paragraphs", or "all").
+// If extractTypes is empty it defaults to extracting links.
+// When opts is nil DefaultOptions is used.
+// Before fetching the hostname is resolved and checked against private IP ranges;
+// redirect targets are also checked. The caller's context controls cancellation
+// and timeout at the HTTP transport level.
 func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts *ScrapeOptions) (*Result, error) {
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, rawURL)

@@ -1,3 +1,6 @@
+// Package store implements PostgreSQL persistence for scrape jobs using pgx/v5.
+// It provides CRUD operations for jobs (CreateJob, GetJob, UpdateJob, ListJobs, CancelJob),
+// a Ping method for health checks, and handles JSONB serialisation of scrape results and options.
 package store
 
 import (
@@ -12,15 +15,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// JobStatus represents the lifecycle state of a scrape job.
 type JobStatus string
 
 const (
-	JobStatusQueued     JobStatus = "queued"
+	// JobStatusQueued indicates the job has been created and enqueued but not yet picked up by a worker.
+	JobStatusQueued JobStatus = "queued"
+	// JobStatusProcessing indicates a worker has dequeued the job and is actively scraping.
 	JobStatusProcessing JobStatus = "processing"
-	JobStatusCompleted  JobStatus = "completed"
-	JobStatusFailed     JobStatus = "failed"
+	// JobStatusCompleted indicates the scrape succeeded and the result has been persisted.
+	JobStatusCompleted JobStatus = "completed"
+	// JobStatusFailed indicates all retry attempts were exhausted or the job was cancelled.
+	JobStatusFailed JobStatus = "failed"
 )
 
+// JobOptions holds optional parameters attached to a job at creation time.
+// Each field is a pointer so that nil can distinguish "not set" from a zero value.
 type JobOptions struct {
 	TimeoutSeconds  *int  `json:"timeout_seconds,omitempty"`
 	MaxRetries      *int  `json:"max_retries,omitempty"`
@@ -44,14 +54,20 @@ type Job struct {
 }
 
 var (
-	ErrNotFound     = errors.New("job not found")
+	// ErrNotFound is returned when a job ID does not exist in the database.
+	ErrNotFound = errors.New("job not found")
+	// ErrCannotCancel is returned when attempting to cancel a job whose current
+	// status is not "queued" (e.g. it is already processing, completed, or failed).
 	ErrCannotCancel = errors.New("cannot cancel job with status")
 )
 
+// Store wraps a pgxpool connection pool and provides CRUD operations on the jobs table.
 type Store struct {
 	pool *pgxpool.Pool
 }
 
+// New connects to PostgreSQL, verifies the connection with a ping, and returns a Store.
+// The pool is configured with a maximum of 10 concurrent connections.
 func New(ctx context.Context, databaseURL string) (*Store, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -72,18 +88,22 @@ func New(ctx context.Context, databaseURL string) (*Store, error) {
 	return &Store{pool: pool}, nil
 }
 
+// Ping verifies the database connection is still alive.
 func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
+// Close shuts down the connection pool and releases all database connections.
 func (s *Store) Close() {
 	s.pool.Close()
 }
 
+// Pool returns the underlying pgxpool.Pool for advanced use cases.
 func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
+// CreateJob inserts a new job row with status "queued" and returns the generated UUID and creation timestamp.
 func (s *Store) CreateJob(ctx context.Context, job *Job) (uuid.UUID, error) {
 	var id uuid.UUID
 	var createdAt time.Time
@@ -101,6 +121,8 @@ func (s *Store) CreateJob(ctx context.Context, job *Job) (uuid.UUID, error) {
 	return id, nil
 }
 
+// GetJob retrieves a single job by its UUID. Returns ErrNotFound if the job does not exist.
+// The result and options JSONB columns are deserialised from TEXT casts in the query.
 func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (*Job, error) {
 	var job Job
 	var resultJSON, errorMsg *string
@@ -135,6 +157,9 @@ func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (*Job, error) {
 	return &job, nil
 }
 
+// UpdateJob advances a job's status and conditionally sets result, error message,
+// HTTP status, timing fields, and retries used. Only non-nil fields are overwritten.
+// When status is "completed" or "failed" the completed_at timestamp is set to now.
 func (s *Store) UpdateJob(ctx context.Context, id uuid.UUID, status JobStatus, result *scraper.Result, errorMsg *string, retriesUsed int) error {
 	var httpStatus *int
 	var durationMs *int64
@@ -178,6 +203,9 @@ func (s *Store) UpdateJob(ctx context.Context, id uuid.UUID, status JobStatus, r
 	return nil
 }
 
+// ListJobs returns a paginated, optionally filtered list of jobs ordered by created_at DESC.
+// Valid statusFilter values are "queued", "processing", "completed", and "failed".
+// page is 1-based; limit is clamped to [1, 100] and defaults to 20.
 func (s *Store) ListJobs(ctx context.Context, page, limit int, statusFilter string) ([]*Job, int, error) {
 	if page < 1 {
 		page = 1
@@ -249,6 +277,9 @@ func (s *Store) ListJobs(ctx context.Context, page, limit int, statusFilter stri
 	return jobs, total, nil
 }
 
+// CancelJob sets a queued job's status to "failed" with error_msg "cancelled".
+// Returns ErrNotFound if the job does not exist, or ErrCannotCancel if the job
+// is not in "queued" status.
 func (s *Store) CancelJob(ctx context.Context, id uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET status = 'failed', error_msg = 'cancelled', updated_at = now()
