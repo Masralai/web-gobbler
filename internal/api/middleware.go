@@ -11,6 +11,10 @@ import (
 
 const maxRequestBodySize = 1 << 20
 
+// SecurityHeadersMiddleware sets recommended security-related HTTP headers on every response:
+// X-Content-Type-Options (nosniff), X-Frame-Options (DENY),
+// Content-Security-Policy (default-src 'self'), Strict-Transport-Security,
+// and Referrer-Policy (strict-origin-when-cross-origin).
 func SecurityHeadersMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
@@ -22,6 +26,8 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 	}
 }
 
+// BodySizeLimitMiddleware caps the request body size to 1 MB using http.MaxBytesReader.
+// Requests exceeding this limit will fail with a 413 Payload Too Large error.
 func BodySizeLimitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodySize)
@@ -29,6 +35,8 @@ func BodySizeLimitMiddleware() gin.HandlerFunc {
 	}
 }
 
+// IPRateLimiter provides per-IP token-bucket rate limiting.
+// Visitor entries are periodically purged to prevent unbounded memory growth.
 type IPRateLimiter struct {
 	visitors map[string]*rate.Limiter
 	mu       sync.Mutex
@@ -37,6 +45,8 @@ type IPRateLimiter struct {
 	cleanup  time.Duration
 }
 
+// NewIPRateLimiter creates a rate limiter that allows r tokens per second with the given burst size.
+// Stale entries are cleaned up at the cleanup interval to release memory.
 func NewIPRateLimiter(r rate.Limit, burst int, cleanup time.Duration) *IPRateLimiter {
 	rl := &IPRateLimiter{
 		visitors: make(map[string]*rate.Limiter),
@@ -71,6 +81,8 @@ func (rl *IPRateLimiter) cleanupLoop() {
 	}
 }
 
+// RateLimitMiddleware returns a Gin middleware that enforces per-IP rate limits.
+// When the limit is exceeded it responds with 429 Too Many Requests.
 func RateLimitMiddleware(rl *IPRateLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()

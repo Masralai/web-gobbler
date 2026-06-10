@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// Store defines the persistence contract required by the HTTP handlers.
+// It mirrors the methods of store.Store to enable mock-based testing.
 type Store interface {
 	CreateJob(ctx context.Context, job *store.Job) (uuid.UUID, error)
 	GetJob(ctx context.Context, id uuid.UUID) (*store.Job, error)
@@ -22,19 +24,23 @@ type Store interface {
 	Ping(ctx context.Context) error
 }
 
+// Queue defines the job queue contract required by the HTTP handlers.
+// It mirrors the methods of queue.Queue to enable mock-based testing.
 type Queue interface {
 	Enqueue(ctx context.Context, payload queue.JobPayload) error
 	QueueDepth(ctx context.Context) (int64, error)
 	Ping(ctx context.Context) error
 }
 
+// Handler wires a Store and Queue together and exposes them as Gin handler functions.
 type Handler struct {
-	store         Store
-	queue         Queue
-	defaultTimeout  int
-	defaultRetries  int
+	store          Store
+	queue          Queue
+	defaultTimeout int
+	defaultRetries int
 }
 
+// NewHandler creates a Handler with the given store, queue, and default scraper parameters.
 func NewHandler(s Store, q Queue, defaultTimeout, defaultRetries int) *Handler {
 	return &Handler{
 		store:          s,
@@ -44,6 +50,8 @@ func NewHandler(s Store, q Queue, defaultTimeout, defaultRetries int) *Handler {
 	}
 }
 
+// RegisterRoutes attaches all handler methods to the given router group.
+// Routes: POST /scrape, GET /jobs/:id, GET /jobs, DELETE /jobs/:id, GET /health.
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/scrape", h.HandleScrape)
 	r.GET("/jobs/:id", h.HandleGetJob)
@@ -52,6 +60,9 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/health", h.HandleHealth)
 }
 
+// HandleScrape processes POST /api/v1/scrape.
+// It validates the request, creates a job in the store, pushes a payload to the queue,
+// and returns 202 Accepted with a poll_url.
 func (h *Handler) HandleScrape(c *gin.Context) {
 	var req ScrapeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -121,6 +132,8 @@ func (h *Handler) HandleScrape(c *gin.Context) {
 	})
 }
 
+// HandleGetJob processes GET /api/v1/jobs/:id.
+// Returns the full job response (including results for completed jobs, error for failed jobs).
 func (h *Handler) HandleGetJob(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
@@ -143,6 +156,8 @@ func (h *Handler) HandleGetJob(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// HandleListJobs processes GET /api/v1/jobs.
+// Supports pagination (?page=1&limit=20) and optional status filtering (?status=queued).
 func (h *Handler) HandleListJobs(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -195,6 +210,8 @@ func (h *Handler) HandleListJobs(c *gin.Context) {
 	})
 }
 
+// HandleDeleteJob processes DELETE /api/v1/jobs/:id.
+// Cancels a queued job. Returns 409 if the job is already processing, completed, or failed.
 func (h *Handler) HandleDeleteJob(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
@@ -220,6 +237,9 @@ func (h *Handler) HandleDeleteJob(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
 }
 
+// HandleHealth processes GET /api/v1/health.
+// Pings the store and queue; returns 200 with "ok" or 503 with "degraded".
+// Error details are logged serverside and not exposed in the response body.
 func (h *Handler) HandleHealth(c *gin.Context) {
 	resp := HealthResponse{
 		Status:  "ok",
