@@ -32,17 +32,20 @@ func validateScrapeRequest(req *ScrapeRequest) error {
 	}
 
 	if req.Options != nil {
-		if req.Options.TimeoutSeconds != nil {
-			if *req.Options.TimeoutSeconds < 1 || *req.Options.TimeoutSeconds > 60 {
-				return fmt.Errorf("timeout_seconds must be between 1 and 60")
-			}
-		}
-		if req.Options.MaxRetries != nil {
-			if *req.Options.MaxRetries < 0 || *req.Options.MaxRetries > 5 {
-				return fmt.Errorf("max_retries must be between 0 and 5")
-			}
+		if err := validateOptions(req.Options); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func validateOptions(opts *ScrapeOptions) error {
+	if opts.TimeoutSeconds != nil && (*opts.TimeoutSeconds < 1 || *opts.TimeoutSeconds > 60) {
+		return fmt.Errorf("timeout_seconds must be between 1 and 60")
+	}
+	if opts.MaxRetries != nil && (*opts.MaxRetries < 0 || *opts.MaxRetries > 5) {
+		return fmt.Errorf("max_retries must be between 0 and 5")
+	}
 	return nil
 }
