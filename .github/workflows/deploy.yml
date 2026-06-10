@@ -1,0 +1,164 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_API_REPOSITORY: goscrape-api
+  ECR_WORKER_REPOSITORY: goscrape-worker
+  ECS_CLUSTER: goscrape-prod
+  ECS_API_SERVICE: goscrape-api
+  ECS_WORKER_SERVICE: goscrape-worker
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Lint and vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -race -cover ./...
+
+      - name: Integration tests
+        run: |
+          docker compose up -d postgres redis
+          sleep 5
+          go test -tags=integration -race -v ./test/integration/...
+        working-directory: ${{ github.workspace }}
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      api-image: ${{ steps.build-api.outputs.image }}
+      worker-image: ${{ steps.build-worker.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+
+      - name: Build, tag, and push API image
+        id: build-api
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_API_REPOSITORY:$IMAGE_TAG"
+          docker build -f docker/Dockerfile.api -t $IMAGE_URI .
+          docker tag $IMAGE_URI $ECR_REGISTRY/$ECR_API_REPOSITORY:latest
+          docker push $IMAGE_URI
+          docker push $ECR_REGISTRY/$ECR_API_REPOSITORY:latest
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Build, tag, and push worker image
+        id: build-worker
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_WORKER_REPOSITORY:$IMAGE_TAG"
+          docker build -f docker/Dockerfile.worker -t $IMAGE_URI .
+          docker tag $IMAGE_URI $ECR_REGISTRY/$ECR_WORKER_REPOSITORY:latest
+          docker push $IMAGE_URI
+          docker push $ECR_REGISTRY/$ECR_WORKER_REPOSITORY:latest
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+
+      - name: Fetch current API task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition goscrape-api \
+            --query taskDefinition \
+            > /tmp/api-task-def.json
+
+      - name: Update API task definition image
+        id: task-def-api
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: /tmp/api-task-def.json
+          container-name: api
+          image: ${{ needs.build-and-push.outputs.api-image }}
+
+      - name: Fetch current worker task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition goscrape-worker \
+            --query taskDefinition \
+            > /tmp/worker-task-def.json
+
+      - name: Update worker task definition image
+        id: task-def-worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: /tmp/worker-task-def.json
+          container-name: worker
+          image: ${{ needs.build-and-push.outputs.worker-image }}
+
+      - name: Deploy API service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-api.outputs.task-definition }}
+          service: ${{ env.ECS_API_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Deploy worker service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-worker.outputs.task-definition }}
+          service: ${{ env.ECS_WORKER_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Health check
+        env:
+          ALB_DNS: ${{ secrets.ALB_DNS }}
+        run: |
+          if [ -z "$ALB_DNS" ]; then
+            echo "ALB_DNS secret not set, skipping health check"
+            exit 0
+          fi
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS/health || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "API is healthy"
+              exit 0
+            fi
+            echo "Attempt $i: health check returned $STATUS, retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed after 30 attempts"
+          exit 1
