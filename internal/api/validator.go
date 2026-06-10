@@ -40,7 +40,7 @@ func validateScrapeRequest(req *ScrapeRequest) error {
 	return nil
 }
 
-func validateOptions(opts *ScrapeOptions) error {
+func validateOptions(opts *RequestOptions) error {
 	if opts.TimeoutSeconds != nil && (*opts.TimeoutSeconds < 1 || *opts.TimeoutSeconds > 60) {
 		return fmt.Errorf("timeout_seconds must be between 1 and 60")
 	}
