@@ -21,11 +21,6 @@ terraform.rc
 .env.local
 .env.production
 
-# ── IDE & OS ──
-.vscode/
-.idea/
-*.swp
-*.swo
 *~
 .DS_Store
 Thumbs.db
