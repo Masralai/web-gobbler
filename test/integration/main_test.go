@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -16,6 +17,19 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/modules/redis"
 )
+
+func connectStore(ctx context.Context, connStr string) (*store.Store, error) {
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		s, err := store.New(ctx, connStr)
+		if err == nil {
+			return s, nil
+		}
+		lastErr = err
+		time.Sleep(time.Duration(100*(1<<i)) * time.Millisecond)
+	}
+	return nil, fmt.Errorf("connect store after 10 retries: %w", lastErr)
+}
 
 var (
 	testStore *store.Store
@@ -53,7 +67,7 @@ func TestMain(m *testing.M) {
 		panic("failed to get redis connection string: " + err.Error())
 	}
 
-	s, err := store.New(ctx, pgConnStr)
+	s, err := connectStore(ctx, pgConnStr)
 	if err != nil {
 		panic("failed to create store: " + err.Error())
 	}
