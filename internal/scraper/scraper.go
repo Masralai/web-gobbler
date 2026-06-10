@@ -97,6 +97,79 @@ func DefaultOptions() *ScrapeOptions {
 // redirect targets are also checked. The caller's context controls cancellation
 // and timeout at the HTTP transport level.
 func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts *ScrapeOptions) (*Result, error) {
+	parsedURL, err := resolveAndCheckURL(ctx, rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts == nil {
+		opts = DefaultOptions()
+	}
+
+	client := newScrapeClient(opts)
+
+	start := time.Now()
+	doc, httpStatus, err := fetchAndParse(ctx, client, rawURL, opts, start)
+	if err != nil {
+		return &Result{HTTPStatus: httpStatus, DurationMs: time.Since(start).Milliseconds()}, err
+	}
+
+	result := &Result{
+		HTTPStatus: httpStatus,
+	}
+
+	extractSet := buildExtractSet(extractTypes)
+
+	if extractSet["links"] || extractSet["all"] {
+		result.Links = extractLinks(doc, parsedURL)
+	}
+	if extractSet["headers"] || extractSet["all"] {
+		result.Headers = extractHeaders(doc)
+	}
+	if extractSet["paragraphs"] || extractSet["all"] {
+		result.Paragraphs = extractParagraphs(doc)
+	}
+
+	result.DurationMs = time.Since(start).Milliseconds()
+	return result, nil
+}
+
+func fetchAndParse(ctx context.Context, client *http.Client, rawURL string, opts *ScrapeOptions, start time.Time) (*goquery.Document, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", opts.UserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, 0, fmt.Errorf("%w: %w", ErrTimeout, err)
+		}
+		return nil, 0, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, resp.StatusCode, fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
+	}
+
+	var bodyReader io.Reader = resp.Body
+	if opts.MaxBodySize > 0 {
+		bodyReader = io.LimitReader(resp.Body, opts.MaxBodySize)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(bodyReader)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("%w: %w", ErrParseFailure, err)
+	}
+
+	return doc, resp.StatusCode, nil
+}
+
+func resolveAndCheckURL(ctx context.Context, rawURL string) (*url.URL, error) {
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, rawURL)
 	}
@@ -119,11 +192,11 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 		}
 	}
 
-	if opts == nil {
-		opts = DefaultOptions()
-	}
+	return parsedURL, nil
+}
 
-	client := &http.Client{
+func newScrapeClient(opts *ScrapeOptions) *http.Client {
+	return &http.Client{
 		Timeout: opts.Timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !opts.FollowRedirects {
@@ -145,44 +218,9 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 			return nil
 		},
 	}
+}
 
-	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("User-Agent", opts.UserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%w: %w", ErrTimeout, err)
-		}
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &Result{HTTPStatus: resp.StatusCode, DurationMs: time.Since(start).Milliseconds()},
-			fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
-	}
-
-	var bodyReader io.Reader = resp.Body
-	if opts.MaxBodySize > 0 {
-		bodyReader = io.LimitReader(resp.Body, opts.MaxBodySize)
-	}
-
-	doc, err := goquery.NewDocumentFromReader(bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseFailure, err)
-	}
-
-	result := &Result{
-		HTTPStatus: resp.StatusCode,
-	}
-
+func buildExtractSet(extractTypes []string) map[string]bool {
 	extractSet := make(map[string]bool, len(extractTypes))
 	if len(extractTypes) == 0 {
 		extractSet["links"] = true
@@ -191,40 +229,44 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 			extractSet[strings.ToLower(t)] = true
 		}
 	}
+	return extractSet
+}
 
-	if extractSet["links"] || extractSet["all"] {
-		doc.Find("a").Each(func(i int, s *goquery.Selection) {
-			href, exists := s.Attr("href")
-			if !exists {
-				return
-			}
-			linkURL, err := url.Parse(href)
-			if err != nil {
-				return
-			}
-			absoluteURL := parsedURL.ResolveReference(linkURL).String()
-			result.Links = append(result.Links, absoluteURL)
-		})
-	}
+func extractLinks(doc *goquery.Document, baseURL *url.URL) []string {
+	var links []string
+	doc.Find("a").Each(func(i int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if !exists {
+			return
+		}
+		linkURL, err := url.Parse(href)
+		if err != nil {
+			return
+		}
+		absoluteURL := baseURL.ResolveReference(linkURL).String()
+		links = append(links, absoluteURL)
+	})
+	return links
+}
 
-	if extractSet["headers"] || extractSet["all"] {
-		doc.Find("h1,h2,h3,h4").Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if text != "" {
-				result.Headers = append(result.Headers, text)
-			}
-		})
-	}
+func extractHeaders(doc *goquery.Document) []string {
+	var headers []string
+	doc.Find("h1,h2,h3,h4").Each(func(i int, s *goquery.Selection) {
+		text := strings.TrimSpace(s.Text())
+		if text != "" {
+			headers = append(headers, text)
+		}
+	})
+	return headers
+}
 
-	if extractSet["paragraphs"] || extractSet["all"] {
-		doc.Find("p").Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if text != "" {
-				result.Paragraphs = append(result.Paragraphs, text)
-			}
-		})
-	}
-
-	result.DurationMs = time.Since(start).Milliseconds()
-	return result, nil
+func extractParagraphs(doc *goquery.Document) []string {
+	var paragraphs []string
+	doc.Find("p").Each(func(i int, s *goquery.Selection) {
+		text := strings.TrimSpace(s.Text())
+		if text != "" {
+			paragraphs = append(paragraphs, text)
+		}
+	})
+	return paragraphs
 }
