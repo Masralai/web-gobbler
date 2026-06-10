@@ -5,8 +5,9 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /app/api ./cmd/api
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /app/api /api
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /app
+COPY --from=builder /etc/ssl/certs/ /etc/ssl/certs/
+COPY --from=builder /app/api .
 EXPOSE 8080
-CMD ["/api"]
+CMD ["/app/api"]
