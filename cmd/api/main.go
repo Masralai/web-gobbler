@@ -22,11 +22,16 @@ func main() {
 	ctx := context.Background()
 
 	port := getEnv("PORT", "8080")
-	databaseURL := getEnv("DATABASE_URL", "postgresql://user:pass@localhost:5432/goscrape")
-	redisURL := getEnv("REDIS_URL", "redis://localhost:6379")
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
 	defaultTimeout := getEnvInt("DEFAULT_TIMEOUT_SEC", 10)
 	defaultRetries := getEnvInt("DEFAULT_MAX_RETRIES", 3)
 	logLevel := getEnv("LOG_LEVEL", "INFO")
+
+	if databaseURL == "" || redisURL == "" {
+		slog.Error("DATABASE_URL and REDIS_URL must be set")
+		os.Exit(1)
+	}
 
 	setupLogger(logLevel)
 
@@ -52,6 +57,8 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(api.SecurityHeadersMiddleware())
+	r.Use(api.BodySizeLimitMiddleware())
 	r.Use(loggingMiddleware())
 
 	rateLimiter := api.NewIPRateLimiter(rate.Limit(1), 10, 10*time.Minute)
@@ -64,11 +71,12 @@ func main() {
 	handler.RegisterRoutes(v1)
 
 	srv := &http.Server{
-		Addr:         ":" + port,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              ":" + port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {

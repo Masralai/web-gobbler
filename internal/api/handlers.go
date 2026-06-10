@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/Masralai/web-gobbler/internal/metrics"
 	"github.com/Masralai/web-gobbler/internal/queue"
@@ -56,7 +55,8 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 func (h *Handler) HandleScrape(c *gin.Context) {
 	var req ScrapeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body: " + err.Error()})
+		slog.Debug("invalid request body", "error", err)
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
 		return
 	}
 
@@ -209,7 +209,7 @@ func (h *Handler) HandleDeleteJob(c *gin.Context) {
 			c.JSON(http.StatusNotFound, ErrorResponse{Error: "job not found"})
 			return
 		}
-		if strings.Contains(err.Error(), "cannot cancel") {
+		if errors.Is(err, store.ErrCannotCancel) {
 			c.JSON(http.StatusConflict, ErrorResponse{Error: err.Error()})
 			return
 		}
@@ -229,11 +229,13 @@ func (h *Handler) HandleHealth(c *gin.Context) {
 	}
 
 	if err := h.store.Ping(c.Request.Context()); err != nil {
-		resp.DB = "error: " + err.Error()
+		slog.Error("health check: db ping failed", "error", err)
+		resp.DB = "degraded"
 		resp.Status = "degraded"
 	}
 	if err := h.queue.Ping(c.Request.Context()); err != nil {
-		resp.Redis = "error: " + err.Error()
+		slog.Error("health check: redis ping failed", "error", err)
+		resp.Redis = "degraded"
 		resp.Status = "degraded"
 	}
 

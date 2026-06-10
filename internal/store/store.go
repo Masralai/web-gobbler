@@ -44,7 +44,8 @@ type Job struct {
 }
 
 var (
-	ErrNotFound = errors.New("job not found")
+	ErrNotFound     = errors.New("job not found")
+	ErrCannotCancel = errors.New("cannot cancel job with status")
 )
 
 type Store struct {
@@ -266,7 +267,7 @@ func (s *Store) CancelJob(ctx context.Context, id uuid.UUID) error {
 			}
 			return fmt.Errorf("check job %s: %w", id, err)
 		}
-		return fmt.Errorf("cannot cancel job with status %s", current.Status)
+		return fmt.Errorf("%w: %s", ErrCannotCancel, current.Status)
 	}
 	return nil
 }

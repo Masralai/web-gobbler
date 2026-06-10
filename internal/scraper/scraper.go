@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -14,11 +16,36 @@ import (
 )
 
 var (
-	ErrInvalidURL   = errors.New("invalid URL: must be http:// or https://")
-	ErrHTTPFailed   = errors.New("HTTP request failed with non-2xx status")
-	ErrParseFailure = errors.New("failed to parse response body")
-	ErrTimeout      = errors.New("request timed out")
+	ErrInvalidURL    = errors.New("invalid URL: must be http:// or https://")
+	ErrHTTPFailed    = errors.New("HTTP request failed with non-2xx status")
+	ErrParseFailure  = errors.New("failed to parse response body")
+	ErrTimeout       = errors.New("request timed out")
+	ErrPrivateIP     = errors.New("request refused: target resolves to a private IP")
+	ErrTooManyRedirects = errors.New("too many redirects")
 )
+
+var privateCIDRs []*net.IPNet
+
+func init() {
+	for _, cidr := range []string{
+		"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
+		"192.168.0.0/16", "169.254.0.0/16", "::1/128",
+	} {
+		_, block, err := net.ParseCIDR(cidr)
+		if err == nil {
+			privateCIDRs = append(privateCIDRs, block)
+		}
+	}
+}
+
+func isPrivateIP(ip net.IP) bool {
+	for _, block := range privateCIDRs {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 type ScrapeOptions struct {
 	Timeout        time.Duration
@@ -56,17 +83,44 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, err)
 	}
 
+	hostname := parsedURL.Hostname()
+	if os.Getenv("SCRAPER_ALLOW_PRIVATE_IPS") == "" {
+		ips, err := net.LookupIP(hostname)
+		if err != nil {
+			return nil, fmt.Errorf("dns lookup failed: %w", err)
+		}
+		for _, ip := range ips {
+			if isPrivateIP(ip) {
+				return nil, fmt.Errorf("%w: %s resolves to %s", ErrPrivateIP, hostname, ip)
+			}
+		}
+	}
+
 	if opts == nil {
 		opts = DefaultOptions()
 	}
 
 	client := &http.Client{
 		Timeout: opts.Timeout,
-	}
-	if !opts.FollowRedirects {
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		}
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if !opts.FollowRedirects {
+				return http.ErrUseLastResponse
+			}
+			if len(via) >= 5 {
+				return fmt.Errorf("%w: %d redirects", ErrTooManyRedirects, len(via))
+			}
+			redirectHost := req.URL.Hostname()
+			redirectIPs, err := net.LookupIP(redirectHost)
+			if err != nil {
+				return fmt.Errorf("redirect dns lookup failed: %w", err)
+			}
+			for _, ip := range redirectIPs {
+				if isPrivateIP(ip) {
+					return fmt.Errorf("%w: redirect to %s resolves to %s", ErrPrivateIP, redirectHost, ip)
+				}
+			}
+			return nil
+		},
 	}
 
 	start := time.Now()

@@ -24,5 +24,4 @@ terraform.rc
 *~
 .DS_Store
 Thumbs.db
-prd.md
-handover.md
+*.md

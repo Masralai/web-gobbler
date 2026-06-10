@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -425,7 +426,7 @@ func TestHandleDeleteJob_404(t *testing.T) {
 func TestHandleDeleteJob_409(t *testing.T) {
 	ms := &mockStore{
 		cancelJobFunc: func(ctx context.Context, id uuid.UUID) error {
-			return errors.New("cannot cancel job with status processing")
+			return fmt.Errorf("%w: processing", store.ErrCannotCancel)
 		},
 	}
 	mq := &mockQueue{}

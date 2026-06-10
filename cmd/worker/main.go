@@ -294,13 +294,18 @@ func startMetricPublisher(ctx context.Context, q *queue.Queue, cloudwatchClient 
 func main() {
 	ctx := context.Background()
 
-	databaseURL := getEnv("DATABASE_URL", "postgresql://user:pass@localhost:5432/goscrape")
-	redisURL := getEnv("REDIS_URL", "redis://localhost:6379")
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
 	concurrency := getEnvInt("WORKER_CONCURRENCY", 5)
 	defaultTimeout := getEnvInt("DEFAULT_TIMEOUT_SEC", 10)
 	defaultRetries := getEnvInt("DEFAULT_MAX_RETRIES", 3)
 	rateLimit := getEnvInt("SCRAPER_RATE_LIMIT", 2)
 	logLevel := getEnv("LOG_LEVEL", "INFO")
+
+	if databaseURL == "" || redisURL == "" {
+		slog.Error("DATABASE_URL and REDIS_URL must be set")
+		os.Exit(1)
+	}
 
 	setupLogger(logLevel)
 

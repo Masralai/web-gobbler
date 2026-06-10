@@ -9,6 +9,26 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const maxRequestBodySize = 1 << 20
+
+func SecurityHeadersMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Content-Security-Policy", "default-src 'self'")
+		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Next()
+	}
+}
+
+func BodySizeLimitMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodySize)
+		c.Next()
+	}
+}
+
 type IPRateLimiter struct {
 	visitors map[string]*rate.Limiter
 	mu       sync.Mutex
