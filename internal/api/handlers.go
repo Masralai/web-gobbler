@@ -100,6 +100,7 @@ func (h *Handler) HandleScrape(c *gin.Context) {
 
 	id, err := h.store.CreateJob(c.Request.Context(), job)
 	if err != nil {
+		slog.Error("failed to create job", "error", err)
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "failed to create job"})
 		return
 	}
