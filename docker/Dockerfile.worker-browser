@@ -1,0 +1,15 @@
+FROM golang:1.26-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app/worker ./cmd/worker
+
+# Browser-capable worker (compose profile: browser). Default worker stays distroless.
+FROM chromedp/headless-shell:latest
+WORKDIR /app
+COPY --from=builder /app/worker /app/worker
+ENV RENDER_JS_ENABLED=1
+ENV CHROME_PATH=/headless-shell/headless-shell
+USER root
+ENTRYPOINT ["/app/worker"]
