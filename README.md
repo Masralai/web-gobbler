@@ -15,6 +15,8 @@ Submit scraping jobs via HTTP, process them asynchronously through a worker pool
 > docker compose up -d
 > curl http://localhost:8080/api/v1/health
 > ```
+>
+> Full run guide (crawl, browser, LLM extract, tests): **[docs/how-to/run.md](docs/how-to/run.md)**. Product phases: **[spec.md](spec.md)**.
 
 ## Architecture
 
@@ -34,8 +36,11 @@ flowchart LR
 
 ## Features
 
+- Configurable extraction — `markdown`, `html`, `raw_html`, links, headers, paragraphs
+- Crawl / map — same-origin multi-page jobs and URL discovery
+- Optional JS render — `options.render_js` with compose profile `browser`
+- Optional LLM extract — `POST /jobs/:id/extract` when `LLM_API_KEY` is set (not an agent)
 - Async job processing — non-blocking HTTP responses, workers pick jobs from Redis
-- Configurable extraction — links, headers, paragraphs from any URL
 - Per-domain rate limiting — 2 req/s default per hostname
 - Retry with exponential backoff — 100ms × 2ⁿ, configurable max attempts
 - Metrics — Prometheus counters/histograms/gauges, Grafana dashboard
@@ -67,19 +72,16 @@ This starts: API (port 8080), worker, PostgreSQL (5432), Redis (6379), Prometheu
 
 ```bash
 curl http://localhost:8080/api/v1/health
+# also: curl http://localhost:8080/health
 ```
 
 ```json
 {"status":"ok","db":"ok","redis":"ok","version":"1.0.0"}
 ```
 
-### Run migrations manually
+Migrations run automatically on API/worker startup (`store.Migrate`). No manual SQL step required for Compose.
 
-Migrations run automatically via init scripts; manual:
-
-```bash
-docker compose exec postgres psql -U user -d goscrape -f /migrations/000001_create_jobs_table.up.sql
-```
+See **[docs/how-to/run.md](docs/how-to/run.md)** for scrape/crawl/map examples, browser profile, LLM extract, and the feature-matrix script.
 
 ## API documentation
 
@@ -89,10 +91,12 @@ Base URL: `/api/v1`
 
 Submit a scraping job.
 
+**Extract types:** `links`, `headers`, `paragraphs`, `markdown`, `html`, `raw_html` (combine freely).
+
 ```json
 {
   "url": "https://example.com",
-  "extract": ["links", "headers", "paragraphs"],
+  "extract": ["markdown", "links"],
   "options": {
     "timeout_seconds": 15,
     "max_retries": 3,
@@ -116,6 +120,41 @@ Response `202 Accepted`:
   "poll_url": "/api/v1/jobs/f47ac10b-58cc-4372-a567-0e02b2c3d479"
 }
 ```
+
+### POST /crawl
+
+Same-origin BFS crawl (no robots.txt in v1). Defaults: `max_pages=10`, `max_depth=2` (caps 100 / 5).
+
+```json
+{
+  "url": "https://example.com",
+  "extract": ["markdown"],
+  "options": { "max_pages": 10, "max_depth": 2 }
+}
+```
+
+Completed `results` include `pages[]`, `pages_crawled`, `pages_skipped`.
+
+### POST /map
+
+URL discovery only. Defaults: `max_urls=50`, `max_depth=2` (caps 500 / 5).
+
+```json
+{
+  "url": "https://example.com",
+  "options": { "max_urls": 50, "max_depth": 2 }
+}
+```
+
+Completed `results.urls` is a string array.
+
+### POST /jobs/:id/extract
+
+Optional LLM schema extract (requires `LLM_API_KEY` on API). Returns `501` if unset. See [docs/how-to/llm-extract.md](docs/how-to/llm-extract.md).
+
+### JS rendering
+
+Pass `"options": { "render_js": true }` on scrape/crawl. Needs browser worker: `docker compose --profile browser up`. See [docs/how-to/browser-render.md](docs/how-to/browser-render.md).
 
 ### GET /jobs/:id
 
