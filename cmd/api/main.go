@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Masralai/web-gobbler/internal/api"
+	"github.com/Masralai/web-gobbler/internal/extract"
 	"github.com/Masralai/web-gobbler/internal/queue"
 	"github.com/Masralai/web-gobbler/internal/store"
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,12 @@ func main() {
 	defer db.Close()
 	slog.Info("connected to PostgreSQL")
 
+	if err := db.Migrate(ctx); err != nil {
+		slog.Error("failed to migrate database", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("database schema ready")
+
 	q, err := queue.New(ctx, redisURL)
 	if err != nil {
 		slog.Error("failed to connect to redis", "error", err)
@@ -64,12 +71,21 @@ func main() {
 	r.Use(api.BodySizeLimitMiddleware())
 	r.Use(loggingMiddleware())
 
-	rateLimiter := api.NewIPRateLimiter(rate.Limit(1), 10, 10*time.Minute)
+	ratePerSec := getEnvFloat("API_RATE_LIMIT", 1)
+	rateBurst := getEnvInt("API_RATE_BURST", 10)
+	rateLimiter := api.NewIPRateLimiter(rate.Limit(ratePerSec), rateBurst, 10*time.Minute)
 	r.Use(api.RateLimitMiddleware(rateLimiter))
 
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	handler := api.NewHandler(db, q, defaultTimeout, defaultRetries)
+	llmCfg := extract.FromEnv()
+	if llmCfg.Enabled() {
+		handler.WithExtractor(extract.NewClient(llmCfg, nil), true)
+		slog.Info("LLM extract enabled", "model", llmCfg.Model, "base_url", llmCfg.BaseURL)
+	}
+	// ponytail: root /health for ALB/ECS/CI; /api/v1/health kept for API clients
+	r.GET("/health", handler.HandleHealth)
 	v1 := r.Group("/api/v1")
 	handler.RegisterRoutes(v1)
 
@@ -118,6 +134,16 @@ func getEnvInt(key string, fallback int) int {
 		var i int
 		if _, err := fmt.Sscanf(v, "%d", &i); err == nil {
 			return i
+		}
+	}
+	return fallback
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		var f float64
+		if _, err := fmt.Sscanf(v, "%f", &f); err == nil {
+			return f
 		}
 	}
 	return fallback

@@ -5,6 +5,7 @@
 package api
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/Masralai/web-gobbler/internal/scraper"
@@ -23,6 +24,23 @@ type RequestOptions struct {
 	TimeoutSeconds  *int  `json:"timeout_seconds,omitempty"`
 	MaxRetries      *int  `json:"max_retries,omitempty"`
 	FollowRedirects *bool `json:"follow_redirects,omitempty"`
+	MaxPages        *int  `json:"max_pages,omitempty"`
+	MaxDepth        *int  `json:"max_depth,omitempty"`
+	MaxURLs         *int  `json:"max_urls,omitempty"`
+	RenderJS        *bool `json:"render_js,omitempty"`
+}
+
+// CrawlRequest is the JSON body for POST /api/v1/crawl.
+type CrawlRequest struct {
+	URL     string          `json:"url" binding:"required"`
+	Extract []string        `json:"extract"`
+	Options *RequestOptions `json:"options,omitempty"`
+}
+
+// MapRequest is the JSON body for POST /api/v1/map.
+type MapRequest struct {
+	URL     string          `json:"url" binding:"required"`
+	Options *RequestOptions `json:"options,omitempty"`
 }
 
 // JobResponse is the full response body returned by GET /api/v1/jobs/:id.
@@ -42,11 +60,15 @@ type JobResponse struct {
 
 // JobMeta holds summary counts and metadata included alongside a completed job response.
 type JobMeta struct {
-	LinksCount      int `json:"links_count"`
-	HeadersCount    int `json:"headers_count"`
-	ParagraphsCount int `json:"paragraphs_count"`
-	HTTPStatus      int `json:"http_status"`
-	RetriesUsed     int `json:"retries_used"`
+	LinksCount      int  `json:"links_count"`
+	HeadersCount    int  `json:"headers_count"`
+	ParagraphsCount int  `json:"paragraphs_count"`
+	MarkdownLength  int  `json:"markdown_length,omitempty"`
+	PagesCrawled    int  `json:"pages_crawled,omitempty"`
+	URLCount        int  `json:"url_count,omitempty"`
+	HTTPStatus      int  `json:"http_status"`
+	RetriesUsed     int  `json:"retries_used"`
+	Truncated       bool `json:"truncated,omitempty"`
 }
 
 // PaginatedResponse wraps a list of job summaries with total count and pagination info.
@@ -64,6 +86,26 @@ type JobSummary struct {
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ExtractRequest is the body for POST /api/v1/jobs/:id/extract.
+type ExtractRequest struct {
+	Schema json.RawMessage `json:"schema,omitempty"`
+	Prompt string          `json:"prompt,omitempty"`
+}
+
+// ExtractResponse is returned by successful LLM extract.
+type ExtractResponse struct {
+	JobID     uuid.UUID       `json:"job_id"`
+	Extracted json.RawMessage `json:"extracted,omitempty"`
+	Pages     []PageExtract   `json:"pages,omitempty"`
+}
+
+// PageExtract is per-page extract output for crawl jobs.
+type PageExtract struct {
+	URL       string          `json:"url"`
+	Extracted json.RawMessage `json:"extracted,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 // ErrorResponse is the standard error body returned on non-2xx responses.
