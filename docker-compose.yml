@@ -141,6 +141,8 @@ services:
       FLOCI_STORAGE_MODE: persistent
       FLOCI_DEFAULT_REGION: us-east-1
       FLOCI_HOSTNAME: floci
+      FLOCI_SERVICES_ECR_URI_STYLE: path
+      FLOCI_SERVICES_ECS_DOCKER_NETWORK: web-gobbler_default
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health"]
       interval: 5s

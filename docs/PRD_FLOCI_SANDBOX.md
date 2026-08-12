@@ -89,15 +89,24 @@ Order of attack per resource group:
 | Resource / attribute (prod) | Attempt (as-is) | Negotiated fallback (only if rejected) |
 |---|---|---|
 | VPC / subnets / IGW / SG / route tables | as-is (Floci EC2/ECS backs VPC) | none |
-| `aws_db_instance` (postgres 16, snapshot, encryption) | as-is | drop `final_snapshot` / `storage_encrypted`; tune instance-class fields Floci ignores |
-| `aws_elasticache_replication_group` (redis, auth, transit encryption) | as-is | drop `auth_token` / `transit_encryption_enabled` (ACL auth discovered at runtime) |
+| `aws_db_instance` (postgres 16, snapshot, encryption) | as-is | `deploy_mode=floci`: drop `final_snapshot` / `storage_encrypted`; `storage_type=gp2`, `backup_retention=0`, no auto-minor-upgrade to match Floci's read-back (idempotency); `password` from `var.db_master_password` instead of `random_password` |
+| `aws_db_parameter_group` | as-is | `lifecycle.ignore_changes=[parameter, tags, tags_all]` (Floci drops on read-back) |
+| `aws_elasticache_subnet_group` | as-is | omitted under `floci` (Floci: `CreateCacheSubnetGroup not supported`) |
+| `aws_elasticache_replication_group` (redis, auth, transit encryption) | as-is | `deploy_mode=floci`: `auth_token=null`, `transit_encryption_enabled=false`, `num_cache_clusters=0` (Floci can't `IncreaseReplicaCount`), endpoint via `floci-valkey-<rgid>` container name (Floci returns no `primary_endpoint_address`); `lifecycle.ignore_changes=[engine, tags, tags_all]` |
 | `aws_ecr_repository` x2 | as-is (real `registry:2`) | none |
-| `aws_ecs_cluster` + task definitions | as-is (FARGATE / awsvpc attempt) | `network_mode = "bridge"`, `requires_compatibilities` / `launch_type` omitted |
-| task logs | `awslogs` → CloudWatch | `json-file` driver |
-| config injection | `secrets` from SecretsManager | inline `environment` vars |
-| ALB + target group + listener | as-is (`load_balancer` block) | drop the block; expose API via `hostPort: 8080` |
-| worker auto-scaling / SNS alarms | as-is | omit (Floci stores policies inert) |
-| state backend | S3 | local state for `deploy_mode=floci` |
+| IAM managed-policy attachments (`CloudWatchLogsFullAccess`) | as-is | inline policy under `floci` (managed policy ARN absent in Floci IAM) |
+| `aws_ecs_cluster` + task definitions | as-is (FARGATE / awsvpc attempt) | `network_mode = "bridge"`, `requires_compatibilities` / `launch_type` omitted (compute layer, issue #3) |
+| task logs | `awslogs` → CloudWatch | `json-file` driver (compute layer, issue #3) |
+| config injection | `secrets` from SecretsManager | inline `environment` vars (compute layer, issue #3) |
+| ALB + target group + listener | as-is (`load_balancer` block) | omitted under `floci` (Floci ELBv2 rejects with `InvalidClientTokenId`); expose API via `hostPort: 8080` (compute layer, issue #3) |
+| worker auto-scaling / SNS alarms | as-is | omitted under `floci` (Floci: `RegisterScalableTarget not supported`); SNS topic kept |
+| 103 | `GET http://localhost:8080/api/v1/health` | returns {"status":"ok","db":"ok","redis":"ok"} (attempt) | hangs at DB dial: Floci creates task on `NetworkMode=bridge` with published `hostPort: 8080`, then attaches `web-gobbler_default` network after container start; app starts on bridge-only, RDS proxy at `172.18.0.2:7001` unreachable, `pool.Ping` with `context.Background()` has no timeout → hangs; worker (single-homed, no hostPort) and dual-homed pgx probe both work; root cause is network attach ordering, not dual-homing per se; recorded in compute-layer downgrades 98-101 |
+| state backend | S3 | S3 **re-pointed at Floci** via `backend.floci.hcl` (`endpoint=http://localhost:4566`, `access_key/secret_key=test`, `skip_*` validation, `force_path_style`); `-backend-config` cannot change backend type, so bucket `goscrape-terraform-state` must pre-exist (state persists in `floci_data` volume) |
+| provider configuration | as-is | `deploy_mode=floci`: region `us-east-1`, static `test`/`test` creds, `skip_credentials_validation`/`skip_region_validation`/`skip_requesting_account_id`, `dynamic endpoints` for ec2/ecs/ecr/elasticache/rds/iam/logs/sts/secretsmanager/sns/cloudwatch/elbv2/autoscaling (missing endpoints silently hit real AWS with dummy creds) |
+
+Pre-existing provider v5 incompatibilities fixed (apply to both modes): `replication_group_description` → `description` (elasticache.tf); `parameters` on `aws_db_instance` → `aws_db_parameter_group` (rds.tf).
+
+Floci read-back quirks (data plane idempotency): SG `ingress`/`egress`, `tags`/`tags_all`, param-group `parameter` blocks are applied to Floci but not returned on describe, so `lifecycle.ignore_changes` suppresses perpetual re-adds.
 
 ### Interface contracts (sandbox)
 
