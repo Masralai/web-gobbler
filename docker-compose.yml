@@ -128,5 +128,25 @@ services:
       - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources
       - ./docker/grafana/dashboard.json:/etc/grafana/provisioning/dashboards/goscrape.json
 
+  # Local AWS sandbox (Floci): docker compose --profile sandbox up -d floci
+  floci:
+    profiles: ["sandbox"]
+    image: floci/floci:latest
+    ports:
+      - "4566:4566"
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - floci_data:/app/data
+    environment:
+      FLOCI_STORAGE_MODE: persistent
+      FLOCI_DEFAULT_REGION: us-east-1
+      FLOCI_HOSTNAME: floci
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
 volumes:
   postgres_data:
+  floci_data:
