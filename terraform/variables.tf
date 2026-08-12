@@ -1,3 +1,19 @@
+variable "deploy_mode" {
+  description = "Deployment target: 'aws' (real AWS) or 'floci' (local sandbox at floci_endpoint)"
+  type        = string
+  default     = "aws"
+  validation {
+    condition     = contains(["aws", "floci"], var.deploy_mode)
+    error_message = "deploy_mode must be either 'aws' or 'floci'."
+  }
+}
+
+variable "floci_endpoint" {
+  description = "Base URL of the Floci (LocalStack-compatible) endpoint for deploy_mode=floci"
+  type        = string
+  default     = "http://localhost:4566"
+}
+
 variable "aws_region" {
   description = "AWS region for all resources"
   type        = string
@@ -72,6 +88,18 @@ variable "db_master_username" {
   description = "PostgreSQL master username"
   type        = string
   default     = "goscrape_admin"
+}
+
+variable "db_master_password" {
+  description = "Fixed Postgres master password for deploy_mode=floci (real AWS uses a generated random password)"
+  type        = string
+  default     = "devpass"
+}
+
+variable "redis_auth_token" {
+  description = "Fixed Redis auth token for deploy_mode=floci (real AWS uses a generated random token)"
+  type        = string
+  default     = "devpass"
 }
 
 variable "redis_node_type" {

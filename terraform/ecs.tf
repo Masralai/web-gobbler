@@ -13,10 +13,10 @@ resource "aws_vpc" "main" {
 }
 
 resource "aws_subnet" "public" {
-  count             = length(var.public_subnet_cidrs)
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.public_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
+  count                   = length(var.public_subnet_cidrs)
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.public_subnet_cidrs[count.index]
+  availability_zone       = var.availability_zones[count.index]
   map_public_ip_on_launch = true
 
   tags = {
@@ -103,6 +103,7 @@ resource "aws_route_table_association" "private" {
 # ──────────────────────────────────────────────
 
 resource "aws_security_group" "alb" {
+  count       = var.deploy_mode == "aws" ? 1 : 0
   name        = "goscrape-${var.environment_name}-alb-sg"
   description = "Allow HTTP inbound to ALB"
   vpc_id      = aws_vpc.main.id
@@ -128,10 +129,11 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_lb" "api" {
+  count              = var.deploy_mode == "aws" ? 1 : 0
   name               = "goscrape-${var.environment_name}"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
+  security_groups    = [aws_security_group.alb[0].id]
   subnets            = aws_subnet.public[*].id
 
   tags = {
@@ -140,6 +142,7 @@ resource "aws_lb" "api" {
 }
 
 resource "aws_lb_target_group" "api" {
+  count       = var.deploy_mode == "aws" ? 1 : 0
   name        = "goscrape-${var.environment_name}-api-tg"
   port        = 8080
   protocol    = "HTTP"
@@ -164,13 +167,14 @@ resource "aws_lb_target_group" "api" {
 }
 
 resource "aws_lb_listener" "api" {
-  load_balancer_arn = aws_lb.api.arn
+  count             = var.deploy_mode == "aws" ? 1 : 0
+  load_balancer_arn = aws_lb.api[0].arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.api.arn
+    target_group_arn = aws_lb_target_group.api[0].arn
   }
 }
 
@@ -188,7 +192,8 @@ resource "aws_security_group" "ecs_tasks" {
     from_port       = 8080
     to_port         = 8080
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
+    security_groups = var.deploy_mode == "aws" ? [aws_security_group.alb[0].id] : []
+    cidr_blocks     = var.deploy_mode == "aws" ? [] : ["0.0.0.0/0"]
   }
 
   egress {
@@ -242,6 +247,10 @@ resource "aws_iam_role" "ecs_execution" {
       Action = "sts:AssumeRole"
     }]
   })
+
+  lifecycle {
+    ignore_changes = [tags, tags_all]
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_execution_ecr" {
@@ -250,8 +259,28 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_ecr" {
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_execution_logs" {
+  count      = var.deploy_mode == "aws" ? 1 : 0
   role       = aws_iam_role.ecs_execution.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+}
+
+resource "aws_iam_role_policy" "ecs_execution_logs_inline" {
+  count = var.deploy_mode == "floci" ? 1 : 0
+  name  = "goscrape-${var.environment_name}-ecs-logs-inline"
+  role  = aws_iam_role.ecs_execution.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = "*"
+    }]
+  })
 }
 
 resource "aws_iam_role_policy" "ecs_execution_secrets" {
@@ -286,6 +315,10 @@ resource "aws_iam_role" "ecs_task" {
       Action = "sts:AssumeRole"
     }]
   })
+
+  lifecycle {
+    ignore_changes = [tags, tags_all]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_task_cloudwatch" {
@@ -336,9 +369,9 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([
     {
-      name         = "api"
-      image        = "${aws_ecr_repository.api.repository_url}:${var.api_image_tag}"
-      essential    = true
+      name                   = "api"
+      image                  = "${aws_ecr_repository.api.repository_url}:${var.api_image_tag}"
+      essential              = true
       readonlyRootFilesystem = true
 
       portMappings = [
@@ -361,10 +394,10 @@ resource "aws_ecs_task_definition" "api" {
       ]
 
       environment = [
-        { name = "PORT",               value = "8080" },
+        { name = "PORT", value = "8080" },
         { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
         { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
-        { name = "LOG_LEVEL",           value = var.log_level }
+        { name = "LOG_LEVEL", value = var.log_level }
       ]
 
       logConfiguration = {
@@ -392,9 +425,9 @@ resource "aws_ecs_task_definition" "worker" {
 
   container_definitions = jsonencode([
     {
-      name         = "worker"
-      image        = "${aws_ecr_repository.worker.repository_url}:${var.worker_image_tag}"
-      essential    = true
+      name                   = "worker"
+      image                  = "${aws_ecr_repository.worker.repository_url}:${var.worker_image_tag}"
+      essential              = true
       readonlyRootFilesystem = true
 
       secrets = [
@@ -409,10 +442,10 @@ resource "aws_ecs_task_definition" "worker" {
       ]
 
       environment = [
-        { name = "WORKER_CONCURRENCY",  value = tostring(var.worker_concurrency) },
+        { name = "WORKER_CONCURRENCY", value = tostring(var.worker_concurrency) },
         { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
         { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
-        { name = "LOG_LEVEL",           value = var.log_level }
+        { name = "LOG_LEVEL", value = var.log_level }
       ]
 
       logConfiguration = {
@@ -445,10 +478,13 @@ resource "aws_ecs_service" "api" {
     assign_public_ip = false
   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.api.arn
-    container_name   = "api"
-    container_port   = 8080
+  dynamic "load_balancer" {
+    for_each = var.deploy_mode == "aws" ? [1] : []
+    content {
+      target_group_arn = aws_lb_target_group.api[0].arn
+      container_name   = "api"
+      container_port   = 8080
+    }
   }
 
   deployment_minimum_healthy_percent = 100
@@ -457,7 +493,7 @@ resource "aws_ecs_service" "api" {
   health_check_grace_period_seconds = 30
 
   depends_on = [
-    aws_lb_listener.api
+    aws_lb_listener.api[0]
   ]
 }
 
@@ -483,6 +519,7 @@ resource "aws_ecs_service" "worker" {
 # ──────────────────────────────────────────────
 
 resource "aws_appautoscaling_target" "worker" {
+  count              = var.deploy_mode == "aws" ? 1 : 0
   max_capacity       = var.worker_max_capacity
   min_capacity       = var.worker_min_capacity
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.worker.name}"
@@ -491,6 +528,7 @@ resource "aws_appautoscaling_target" "worker" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "worker_queue_high" {
+  count               = var.deploy_mode == "aws" ? 1 : 0
   alarm_name          = "goscrape-${var.environment_name}-worker-queue-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -507,6 +545,7 @@ resource "aws_cloudwatch_metric_alarm" "worker_queue_high" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "worker_queue_low" {
+  count               = var.deploy_mode == "aws" ? 1 : 0
   alarm_name          = "goscrape-${var.environment_name}-worker-queue-low"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 5
@@ -523,11 +562,12 @@ resource "aws_cloudwatch_metric_alarm" "worker_queue_low" {
 }
 
 resource "aws_appautoscaling_policy" "worker_scale_out" {
+  count              = var.deploy_mode == "aws" ? 1 : 0
   name               = "goscrape-${var.environment_name}-worker-scale-out"
   policy_type        = "StepScaling"
-  resource_id        = aws_appautoscaling_target.worker.resource_id
-  scalable_dimension = aws_appautoscaling_target.worker.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.worker.service_namespace
+  resource_id        = aws_appautoscaling_target.worker[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.worker[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.worker[0].service_namespace
 
   step_scaling_policy_configuration {
     adjustment_type         = "ChangeInCapacity"
@@ -544,11 +584,12 @@ resource "aws_appautoscaling_policy" "worker_scale_out" {
 }
 
 resource "aws_appautoscaling_policy" "worker_scale_in" {
+  count              = var.deploy_mode == "aws" ? 1 : 0
   name               = "goscrape-${var.environment_name}-worker-scale-in"
   policy_type        = "StepScaling"
-  resource_id        = aws_appautoscaling_target.worker.resource_id
-  scalable_dimension = aws_appautoscaling_target.worker.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.worker.service_namespace
+  resource_id        = aws_appautoscaling_target.worker[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.worker[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.worker[0].service_namespace
 
   step_scaling_policy_configuration {
     adjustment_type         = "ChangeInCapacity"
@@ -565,7 +606,8 @@ resource "aws_appautoscaling_policy" "worker_scale_in" {
 }
 
 resource "aws_autoscaling_notification" "worker_scale_out" {
-  group_names = [aws_appautoscaling_target.worker.resource_id]
+  count       = var.deploy_mode == "aws" ? 1 : 0
+  group_names = [aws_appautoscaling_target.worker[0].resource_id]
   notifications = [
     "autoscaling:EC2_INSTANCE_LAUNCH",
     "autoscaling:EC2_INSTANCE_TERMINATE",

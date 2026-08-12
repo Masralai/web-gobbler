@@ -11,13 +11,14 @@ resource "aws_secretsmanager_secret_version" "redis_url" {
   secret_id = aws_secretsmanager_secret.redis_url.id
   secret_string = format(
     "redis://:%s@%s:%d",
-    random_password.redis.result,
-    aws_elasticache_replication_group.redis.primary_endpoint_address,
+    var.deploy_mode == "aws" ? random_password.redis.result : var.redis_auth_token,
+    var.deploy_mode == "aws" ? aws_elasticache_replication_group.redis.primary_endpoint_address : "floci-valkey-${aws_elasticache_replication_group.redis.replication_group_id}",
     aws_elasticache_replication_group.redis.port
   )
 }
 
 resource "aws_elasticache_subnet_group" "redis" {
+  count      = var.deploy_mode == "aws" ? 1 : 0
   name       = "goscrape-${var.environment_name}-redis-subnet"
   subnet_ids = aws_subnet.private[*].id
 }
@@ -41,26 +42,33 @@ resource "aws_security_group" "redis" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
 }
 
 resource "aws_elasticache_replication_group" "redis" {
-  replication_group_id          = "goscrape-${var.environment_name}"
-  replication_group_description = "GoScrape Redis ${var.environment_name}"
-  engine                        = "redis"
-  engine_version                = var.redis_engine_version
-  node_type                     = var.redis_node_type
-  num_cache_clusters            = 1
-  port                          = 6379
-  parameter_group_name          = "default.redis7"
+  replication_group_id = "goscrape-${var.environment_name}"
+  description          = "GoScrape Redis ${var.environment_name}"
+  engine_version       = var.redis_engine_version
+  node_type            = var.redis_node_type
+  num_cache_clusters   = var.deploy_mode == "aws" ? 1 : 0
+  port                 = 6379
+  parameter_group_name = "default.redis7"
 
-  subnet_group_name          = aws_elasticache_subnet_group.redis.name
-  security_group_ids         = [aws_security_group.redis.id]
+  subnet_group_name  = var.deploy_mode == "aws" ? aws_elasticache_subnet_group.redis[0].name : null
+  security_group_ids = [aws_security_group.redis.id]
 
-  auth_token    = random_password.redis.result
-  transit_encryption_enabled = true
+  auth_token                 = var.deploy_mode == "aws" ? random_password.redis.result : null
+  transit_encryption_enabled = var.deploy_mode == "aws"
 
   automatic_failover_enabled = false
   multi_az_enabled           = false
+
+  lifecycle {
+    ignore_changes = [engine, tags, tags_all]
+  }
 
   tags = {
     Name = "goscrape-${var.environment_name}"

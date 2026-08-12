@@ -20,7 +20,7 @@ output "rds_port" {
 
 output "redis_primary_endpoint" {
   description = "ElastiCache Redis primary endpoint"
-  value       = aws_elasticache_replication_group.redis.primary_endpoint_address
+  value       = var.deploy_mode == "aws" ? aws_elasticache_replication_group.redis.primary_endpoint_address : "floci-valkey-${aws_elasticache_replication_group.redis.replication_group_id}"
 }
 
 output "redis_port" {
@@ -28,14 +28,29 @@ output "redis_port" {
   value       = aws_elasticache_replication_group.redis.port
 }
 
+output "rds_host" {
+  description = "RDS PostgreSQL host"
+  value       = aws_db_instance.postgres.address
+}
+
+output "redis_host" {
+  description = "ElastiCache Redis primary endpoint host"
+  value       = var.deploy_mode == "aws" ? aws_elasticache_replication_group.redis.primary_endpoint_address : "floci-valkey-${aws_elasticache_replication_group.redis.replication_group_id}"
+}
+
 output "alb_dns_name" {
   description = "ALB DNS name for the API"
-  value       = aws_lb.api.dns_name
+  value       = var.deploy_mode == "aws" ? aws_lb.api[0].dns_name : null
+}
+
+output "api_url" {
+  description = "API base URL (ALB DNS in aws mode; localhost:8080 in floci mode)"
+  value       = var.deploy_mode == "aws" ? "http://${aws_lb.api[0].dns_name}" : "http://localhost:8080"
 }
 
 output "alb_zone_id" {
   description = "ALB hosted zone ID"
-  value       = aws_lb.api.zone_id
+  value       = var.deploy_mode == "aws" ? aws_lb.api[0].zone_id : null
 }
 
 output "ecs_cluster_name" {

@@ -12,7 +12,7 @@ resource "aws_secretsmanager_secret_version" "db_url" {
   secret_string = format(
     "postgresql://%s:%s@%s:%d/%s",
     var.db_master_username,
-    random_password.db.result,
+    var.deploy_mode == "aws" ? random_password.db.result : var.db_master_password,
     aws_db_instance.postgres.address,
     aws_db_instance.postgres.port,
     var.db_name
@@ -43,6 +43,24 @@ resource "aws_security_group" "rds" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
+}
+
+resource "aws_db_parameter_group" "postgres" {
+  name   = "goscrape-${var.environment_name}-postgres"
+  family = "postgres16"
+
+  parameter {
+    name  = "log_statement"
+    value = "ddl"
+  }
+
+  lifecycle {
+    ignore_changes = [parameter, tags, tags_all]
+  }
 }
 
 resource "aws_db_instance" "postgres" {
@@ -51,30 +69,26 @@ resource "aws_db_instance" "postgres" {
   engine_version    = var.db_engine_version
   instance_class    = var.db_instance_class
   allocated_storage = var.db_allocated_storage
-  storage_type      = "gp3"
+  storage_type      = var.deploy_mode == "aws" ? "gp3" : "gp2"
 
   db_name  = var.db_name
   username = var.db_master_username
-  password = random_password.db.result
+  password = var.deploy_mode == "aws" ? random_password.db.result : var.db_master_password
 
   db_subnet_group_name   = aws_db_subnet_group.postgres.name
   vpc_security_group_ids = [aws_security_group.rds.id]
+  parameter_group_name   = aws_db_parameter_group.postgres.name
 
-  backup_retention_period = 7
-  backup_window           = "03:00-04:00"
-  maintenance_window      = "sun:04:00-sun:05:00"
+  backup_retention_period = var.deploy_mode == "aws" ? 7 : 0
+  backup_window           = var.deploy_mode == "aws" ? "03:00-04:00" : "04:00-06:00"
+  maintenance_window      = var.deploy_mode == "aws" ? "sun:04:00-sun:05:00" : "mon:00:00-mon:03:00"
 
-  skip_final_snapshot     = false
-  final_snapshot_identifier = "goscrape-${var.environment_name}-final-${formatdate("YYYY-MM-DD-hhmm", timestamp())}"
+  auto_minor_version_upgrade = var.deploy_mode == "aws"
 
-  storage_encrypted = true
+  skip_final_snapshot       = var.deploy_mode == "floci"
+  final_snapshot_identifier = var.deploy_mode == "aws" ? "goscrape-${var.environment_name}-final-${formatdate("YYYY-MM-DD-hhmm", timestamp())}" : null
 
-  parameters = [
-    {
-      name  = "log_statement"
-      value = "ddl"
-    }
-  ]
+  storage_encrypted = var.deploy_mode == "aws"
 
   tags = {
     Name = "goscrape-${var.environment_name}"
