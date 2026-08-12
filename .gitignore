@@ -15,6 +15,11 @@ override.tf
 override.tf.json
 terraform.rc
 .terraformrc
+terraform/backend.floci.hcl
+terraform/*.tfplan
+
+# ── Floci sandbox ──
+.floci-data/
 
 # ── Environment ──
 .env
@@ -24,4 +29,3 @@ terraform.rc
 *~
 .DS_Store
 Thumbs.db
-*.md
