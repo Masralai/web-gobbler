@@ -14,10 +14,17 @@ import (
 
 const queueKey = "scraper:jobs:queue"
 
+const (
+	KindScrape = "scrape"
+	KindCrawl  = "crawl"
+	KindMap    = "map"
+)
+
 // JobPayload is the message format pushed into the Redis queue.
 // It carries the job ID, target URL, extract types, and optional overrides.
 type JobPayload struct {
 	JobID   string          `json:"job_id"`
+	Kind    string          `json:"kind,omitempty"` // scrape|crawl|map; empty = scrape
 	URL     string          `json:"url"`
 	Extract []string        `json:"extract"`
 	Options *PayloadOptions `json:"options,omitempty"`
@@ -29,6 +36,10 @@ type PayloadOptions struct {
 	TimeoutSeconds  *int  `json:"timeout_seconds,omitempty"`
 	MaxRetries      *int  `json:"max_retries,omitempty"`
 	FollowRedirects *bool `json:"follow_redirects,omitempty"`
+	MaxPages        *int  `json:"max_pages,omitempty"`
+	MaxDepth        *int  `json:"max_depth,omitempty"`
+	MaxURLs         *int  `json:"max_urls,omitempty"`
+	RenderJS        *bool `json:"render_js,omitempty"`
 }
 
 // Queue wraps a Redis client and exposes FIFO enqueue/dequeue operations.

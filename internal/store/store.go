@@ -35,6 +35,10 @@ type JobOptions struct {
 	TimeoutSeconds  *int  `json:"timeout_seconds,omitempty"`
 	MaxRetries      *int  `json:"max_retries,omitempty"`
 	FollowRedirects *bool `json:"follow_redirects,omitempty"`
+	MaxPages        *int  `json:"max_pages,omitempty"`
+	MaxDepth        *int  `json:"max_depth,omitempty"`
+	MaxURLs         *int  `json:"max_urls,omitempty"`
+	RenderJS        *bool `json:"render_js,omitempty"`
 }
 
 type Job struct {
@@ -155,6 +159,20 @@ func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (*Job, error) {
 	job.CompletedAt = completedAt
 
 	return &job, nil
+}
+
+// ClaimJob moves a job from queued → processing. Returns false if the job is
+// missing or not queued (e.g. cancelled while still sitting in Redis).
+func (s *Store) ClaimJob(ctx context.Context, id uuid.UUID) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE jobs SET status = $1, updated_at = now()
+		 WHERE id = $2 AND status = $3`,
+		JobStatusProcessing, id, JobStatusQueued,
+	)
+	if err != nil {
+		return false, fmt.Errorf("claim job %s: %w", id, err)
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // UpdateJob advances a job's status and conditionally sets result, error message,

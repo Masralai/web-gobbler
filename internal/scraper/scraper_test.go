@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -114,6 +115,31 @@ func TestScrapePage_All(t *testing.T) {
 	}
 	if len(result.Paragraphs) != 2 {
 		t.Errorf("expected 2 paragraphs, got %d", len(result.Paragraphs))
+	}
+	if result.Markdown == "" || !strings.Contains(result.Markdown, "Main Title") {
+		t.Errorf("expected markdown with title, got %q", result.Markdown)
+	}
+	if result.HTML == "" {
+		t.Errorf("expected html for extract all")
+	}
+}
+
+func TestScrapePage_MarkdownAndHTML(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<html><body><main><h1>Hi</h1><p>Body</p></main></body></html>`))
+	}))
+	defer ts.Close()
+
+	result, err := ScrapePage(context.Background(), ts.URL, []string{"markdown", "html", "links"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Markdown, "# Hi") {
+		t.Errorf("markdown: %q", result.Markdown)
+	}
+	if !strings.Contains(result.HTML, "Hi") {
+		t.Errorf("html: %q", result.HTML)
 	}
 }
 

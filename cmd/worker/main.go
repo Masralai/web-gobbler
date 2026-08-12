@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Masralai/web-gobbler/internal/crawl"
 	"github.com/Masralai/web-gobbler/internal/metrics"
 	"github.com/Masralai/web-gobbler/internal/queue"
 	"github.com/Masralai/web-gobbler/internal/scraper"
@@ -117,24 +118,70 @@ func (wp *workerPool) processJob(ctx context.Context, logger *slog.Logger, paylo
 		return
 	}
 
-	log := logger.With("job_id", jobID, "url", payload.URL)
+	log := logger.With("job_id", jobID, "url", payload.URL, "kind", payload.Kind)
 	log.Info("job dequeued")
 
-	if err := wp.store.UpdateJob(ctx, jobID, store.JobStatusProcessing, nil, nil, 0); err != nil {
-		log.Error("failed to mark job as processing", "error", err)
+	claimed, err := wp.store.ClaimJob(ctx, jobID)
+	if err != nil {
+		log.Error("failed to claim job", "error", err)
 		return
 	}
-
-	hostname := extractHostname(payload.URL)
-	if err := wp.rateLimiter.Wait(ctx, hostname); err != nil {
-		log.Warn("rate limiter cancelled", "error", err)
+	if !claimed {
+		log.Info("skipping job", "reason", "not queued")
 		return
 	}
 
 	opts, maxRetries := wp.applyJobOptions(payload, wp.maxRetries)
-	result, err := wp.executeWithRetry(ctx, payload.URL, payload.Extract, &opts, maxRetries)
-	retriesUsed := calculateRetries(result, err)
+	kind := payload.Kind
+	if kind == "" {
+		kind = queue.KindScrape
+	}
 
+	cancelCheck := func() bool {
+		job, err := wp.store.GetJob(ctx, jobID)
+		if err != nil {
+			return false
+		}
+		return job.Status != store.JobStatusProcessing
+	}
+
+	var result *scraper.Result
+	switch kind {
+	case queue.KindCrawl:
+		cOpts := crawl.Options{
+			Extract: payload.Extract,
+			Scrape:  opts,
+		}
+		if payload.Options != nil {
+			if payload.Options.MaxPages != nil {
+				cOpts.MaxPages = *payload.Options.MaxPages
+			}
+			if payload.Options.MaxDepth != nil {
+				cOpts.MaxDepth = *payload.Options.MaxDepth
+			}
+		}
+		result, err = crawl.CrawlBFS(ctx, payload.URL, cOpts, wp.rateLimiter, cancelCheck)
+	case queue.KindMap:
+		cOpts := crawl.Options{Scrape: opts}
+		if payload.Options != nil {
+			if payload.Options.MaxURLs != nil {
+				cOpts.MaxURLs = *payload.Options.MaxURLs
+			}
+			if payload.Options.MaxDepth != nil {
+				cOpts.MaxDepth = *payload.Options.MaxDepth
+			}
+		}
+		result, err = crawl.MapBFS(ctx, payload.URL, cOpts, wp.rateLimiter, cancelCheck)
+	default:
+		hostname := extractHostname(payload.URL)
+		if err := wp.rateLimiter.Wait(ctx, hostname); err != nil {
+			log.Warn("rate limiter cancelled", "error", err)
+			return
+		}
+		result, err = wp.executeWithRetry(ctx, payload.URL, payload.Extract, &opts, maxRetries)
+	}
+
+	retriesUsed := calculateRetries(result, err)
 	wp.handleJobResult(ctx, jobID, log, result, err, retriesUsed)
 }
 
@@ -149,6 +196,9 @@ func (wp *workerPool) applyJobOptions(payload *queue.JobPayload, maxRetries int)
 		}
 		if payload.Options.FollowRedirects != nil {
 			opts.FollowRedirects = *payload.Options.FollowRedirects
+		}
+		if payload.Options.RenderJS != nil {
+			opts.RenderJS = *payload.Options.RenderJS
 		}
 	}
 	return opts, maxRetries
@@ -343,6 +393,12 @@ func main() {
 	}
 	defer db.Close()
 	slog.Info("connected to PostgreSQL")
+
+	if err := db.Migrate(ctx); err != nil {
+		slog.Error("failed to migrate database", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("database schema ready")
 
 	q, err := queue.New(ctx, redisURL)
 	if err != nil {

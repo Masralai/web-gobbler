@@ -257,6 +257,51 @@ func TestStoreCancelQueuedJob(t *testing.T) {
 	if got.Status != store.JobStatusFailed {
 		t.Errorf("expected failed after cancel, got %s", got.Status)
 	}
+
+	claimed, err := testStore.ClaimJob(ctx, id)
+	if err != nil {
+		t.Fatalf("ClaimJob after cancel: %v", err)
+	}
+	if claimed {
+		t.Error("expected ClaimJob to fail for cancelled job")
+	}
+}
+
+func TestStoreClaimQueuedJob(t *testing.T) {
+	ctx := context.Background()
+
+	job := &store.Job{
+		URL:     "https://example.com",
+		Extract: []string{"links"},
+	}
+	id, err := testStore.CreateJob(ctx, job)
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	claimed, err := testStore.ClaimJob(ctx, id)
+	if err != nil {
+		t.Fatalf("ClaimJob: %v", err)
+	}
+	if !claimed {
+		t.Fatal("expected ClaimJob to succeed for queued job")
+	}
+
+	got, err := testStore.GetJob(ctx, id)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != store.JobStatusProcessing {
+		t.Errorf("expected processing after claim, got %s", got.Status)
+	}
+
+	claimed, err = testStore.ClaimJob(ctx, id)
+	if err != nil {
+		t.Fatalf("second ClaimJob: %v", err)
+	}
+	if claimed {
+		t.Error("expected second ClaimJob to fail")
+	}
 }
 
 func TestStoreCancelAlreadyProcessingJob(t *testing.T) {

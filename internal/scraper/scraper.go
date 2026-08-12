@@ -1,16 +1,12 @@
 // Package scraper provides the core web scraping engine.
-// It fetches HTML pages over HTTP, parses the DOM with goquery,
-// and extracts content (links, headers, paragraphs) from the response.
-// SSRF protection is enforced by rejecting targets that resolve to
-// private or loopback IP ranges. Redirect chains are followed up to
-// a maximum of 5 hops, with each redirect target also SSRF-checked.
+// It fetches HTML pages over HTTP (or optional headless Chrome), parses the DOM with goquery,
+// and extracts content. SSRF protection rejects private/loopback targets.
 package scraper
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,17 +18,11 @@ import (
 )
 
 var (
-	// ErrInvalidURL is returned when the provided URL does not use http:// or https://.
-	ErrInvalidURL = errors.New("invalid URL: must be http:// or https://")
-	// ErrHTTPFailed is returned when the server responds with a non-2xx status code.
-	ErrHTTPFailed = errors.New("HTTP request failed with non-2xx status")
-	// ErrParseFailure is returned when the response body cannot be parsed as HTML.
-	ErrParseFailure = errors.New("failed to parse response body")
-	// ErrTimeout is returned when the HTTP request exceeds the configured timeout.
-	ErrTimeout = errors.New("request timed out")
-	// ErrPrivateIP is returned when the target hostname resolves to a private or loopback IP range.
-	ErrPrivateIP = errors.New("request refused: target resolves to a private IP")
-	// ErrTooManyRedirects is returned when the redirect chain exceeds the maximum allowed hops (5).
+	ErrInvalidURL       = errors.New("invalid URL: must be http:// or https://")
+	ErrHTTPFailed       = errors.New("HTTP request failed with non-2xx status")
+	ErrParseFailure     = errors.New("failed to parse response body")
+	ErrTimeout          = errors.New("request timed out")
+	ErrPrivateIP        = errors.New("request refused: target resolves to a private IP")
 	ErrTooManyRedirects = errors.New("too many redirects")
 )
 
@@ -59,26 +49,54 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
-// ScrapeOptions controls HTTP client behaviour for a single scrape request.
+// ScrapeOptions controls fetch/parse behaviour for a single scrape request.
 type ScrapeOptions struct {
 	Timeout         time.Duration
 	MaxRetries      int
 	FollowRedirects bool
 	MaxBodySize     int64
 	UserAgent       string
+	RenderJS        bool
 }
 
-// Result holds the content and metadata extracted from a single scraped page.
+// DefaultHTTPFetcher is used when RenderJS is false.
+var DefaultHTTPFetcher Fetcher = HTTPFetcher{}
+
+// DefaultBrowserFetcher is used when RenderJS is true.
+var DefaultBrowserFetcher Fetcher = NewBrowserFetcher(2)
+
+// PageResult is one page within a crawl/map job result.
+type PageResult struct {
+	URL        string   `json:"url"`
+	Depth      int      `json:"depth"`
+	Links      []string `json:"links,omitempty"`
+	Headers    []string `json:"headers,omitempty"`
+	Paragraphs []string `json:"paragraphs,omitempty"`
+	Markdown   string   `json:"markdown,omitempty"`
+	HTML       string   `json:"html,omitempty"`
+	RawHTML    string   `json:"raw_html,omitempty"`
+	HTTPStatus int      `json:"http_status,omitempty"`
+	Truncated  bool     `json:"truncated,omitempty"`
+}
+
+// Result holds scrape/crawl/map output.
 type Result struct {
-	Links      []string `json:"links"`
-	Headers    []string `json:"headers"`
-	Paragraphs []string `json:"paragraphs"`
-	HTTPStatus int      `json:"http_status"`
-	DurationMs int64    `json:"duration_ms"`
+	Links         []string     `json:"links,omitempty"`
+	Headers       []string     `json:"headers,omitempty"`
+	Paragraphs    []string     `json:"paragraphs,omitempty"`
+	Markdown      string       `json:"markdown,omitempty"`
+	HTML          string       `json:"html,omitempty"`
+	RawHTML       string       `json:"raw_html,omitempty"`
+	Truncated     bool         `json:"truncated,omitempty"`
+	Pages         []PageResult `json:"pages,omitempty"`
+	PagesCrawled  int          `json:"pages_crawled,omitempty"`
+	PagesSkipped  int          `json:"pages_skipped,omitempty"`
+	URLs          []string     `json:"urls,omitempty"`
+	HTTPStatus    int          `json:"http_status"`
+	DurationMs    int64        `json:"duration_ms"`
 }
 
-// DefaultOptions returns ScrapeOptions populated with sensible defaults:
-// 10-second timeout, up to 3 retries, redirects enabled, 5 MB max body, GoScrape/1.0 user-agent.
+// DefaultOptions returns sensible scrape defaults.
 func DefaultOptions() *ScrapeOptions {
 	return &ScrapeOptions{
 		Timeout:         10 * time.Second,
@@ -89,35 +107,31 @@ func DefaultOptions() *ScrapeOptions {
 	}
 }
 
-// ScrapePage fetches the page at rawURL, parses the HTML, and extracts content
-// matching extractTypes ("links", "headers", "paragraphs", or "all").
-// If extractTypes is empty it defaults to extracting links.
-// When opts is nil DefaultOptions is used.
-// Before fetching the hostname is resolved and checked against private IP ranges;
-// redirect targets are also checked. The caller's context controls cancellation
-// and timeout at the HTTP transport level.
+// ScrapePage fetches and extracts content for extractTypes.
 func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts *ScrapeOptions) (*Result, error) {
 	parsedURL, err := resolveAndCheckURL(ctx, rawURL)
 	if err != nil {
 		return nil, err
 	}
-
 	if opts == nil {
 		opts = DefaultOptions()
 	}
 
-	client := newScrapeClient(opts)
-
 	start := time.Now()
-	doc, httpStatus, err := fetchAndParse(ctx, client, rawURL, opts, start)
+	fetcher := DefaultHTTPFetcher
+	if opts.RenderJS {
+		fetcher = DefaultBrowserFetcher
+	}
+	body, httpStatus, err := fetcher.Fetch(ctx, rawURL, opts)
+	if err != nil {
+		return &Result{HTTPStatus: httpStatus, DurationMs: time.Since(start).Milliseconds()}, err
+	}
+	doc, err := parseHTML(body)
 	if err != nil {
 		return &Result{HTTPStatus: httpStatus, DurationMs: time.Since(start).Milliseconds()}, err
 	}
 
-	result := &Result{
-		HTTPStatus: httpStatus,
-	}
-
+	result := &Result{HTTPStatus: httpStatus}
 	extractSet := buildExtractSet(extractTypes)
 
 	if extractSet["links"] || extractSet["all"] {
@@ -129,56 +143,41 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 	if extractSet["paragraphs"] || extractSet["all"] {
 		result.Paragraphs = extractParagraphs(doc)
 	}
+	if extractSet["markdown"] || extractSet["html"] || extractSet["all"] {
+		main := mainContent(doc)
+		clone := main.Clone()
+		stripNoise(clone)
+		if extractSet["markdown"] || extractSet["all"] {
+			result.Markdown = htmlToMarkdown(clone)
+		}
+		if extractSet["html"] || extractSet["all"] {
+			h, trunc := truncateHTML(selectionHTML(clone))
+			result.HTML = h
+			result.Truncated = result.Truncated || trunc
+		}
+	}
+	if extractSet["raw_html"] {
+		bodySel := doc.Find("body").First()
+		if bodySel.Length() == 0 {
+			bodySel = doc.Selection
+		}
+		h, trunc := truncateHTML(selectionHTML(bodySel))
+		result.RawHTML = h
+		result.Truncated = result.Truncated || trunc
+	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
 	return result, nil
-}
-
-func fetchAndParse(ctx context.Context, client *http.Client, rawURL string, opts *ScrapeOptions, start time.Time) (*goquery.Document, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("User-Agent", opts.UserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, 0, fmt.Errorf("%w: %w", ErrTimeout, err)
-		}
-		return nil, 0, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
-	}
-
-	var bodyReader io.Reader = resp.Body
-	if opts.MaxBodySize > 0 {
-		bodyReader = io.LimitReader(resp.Body, opts.MaxBodySize)
-	}
-
-	doc, err := goquery.NewDocumentFromReader(bodyReader)
-	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("%w: %w", ErrParseFailure, err)
-	}
-
-	return doc, resp.StatusCode, nil
 }
 
 func resolveAndCheckURL(ctx context.Context, rawURL string) (*url.URL, error) {
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, rawURL)
 	}
-
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, err)
 	}
-
 	hostname := parsedURL.Hostname()
 	if os.Getenv("SCRAPER_ALLOW_PRIVATE_IPS") == "" {
 		ips, err := net.LookupIP(hostname)
@@ -191,7 +190,6 @@ func resolveAndCheckURL(ctx context.Context, rawURL string) (*url.URL, error) {
 			}
 		}
 	}
-
 	return parsedURL, nil
 }
 
@@ -243,8 +241,7 @@ func extractLinks(doc *goquery.Document, baseURL *url.URL) []string {
 		if err != nil {
 			return
 		}
-		absoluteURL := baseURL.ResolveReference(linkURL).String()
-		links = append(links, absoluteURL)
+		links = append(links, baseURL.ResolveReference(linkURL).String())
 	})
 	return links
 }
@@ -252,8 +249,7 @@ func extractLinks(doc *goquery.Document, baseURL *url.URL) []string {
 func extractHeaders(doc *goquery.Document) []string {
 	var headers []string
 	doc.Find("h1,h2,h3,h4").Each(func(i int, s *goquery.Selection) {
-		text := strings.TrimSpace(s.Text())
-		if text != "" {
+		if text := strings.TrimSpace(s.Text()); text != "" {
 			headers = append(headers, text)
 		}
 	})
@@ -263,8 +259,7 @@ func extractHeaders(doc *goquery.Document) []string {
 func extractParagraphs(doc *goquery.Document) []string {
 	var paragraphs []string
 	doc.Find("p").Each(func(i int, s *goquery.Selection) {
-		text := strings.TrimSpace(s.Text())
-		if text != "" {
+		if text := strings.TrimSpace(s.Text()); text != "" {
 			paragraphs = append(paragraphs, text)
 		}
 	})

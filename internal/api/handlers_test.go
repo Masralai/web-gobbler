@@ -138,6 +138,108 @@ func TestHandleScrape_202(t *testing.T) {
 	}
 }
 
+func TestHandleCrawl_202(t *testing.T) {
+	var got queue.JobPayload
+	ms := &mockStore{
+		createJobFunc: func(ctx context.Context, job *store.Job) (uuid.UUID, error) {
+			return uuid.MustParse("f47ac10b-58cc-4372-a567-0e02b2c3d479"), nil
+		},
+	}
+	mq := &mockQueue{
+		enqueueFunc: func(ctx context.Context, payload queue.JobPayload) error {
+			got = payload
+			return nil
+		},
+	}
+	h := NewHandler(ms, mq, 10, 3)
+	r := setupTestRouter(h)
+	body := `{"url":"https://example.com","extract":["markdown"],"options":{"max_pages":5,"max_depth":1}}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/crawl", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+	if got.Kind != queue.KindCrawl {
+		t.Errorf("kind=%s", got.Kind)
+	}
+	if got.Options == nil || got.Options.MaxPages == nil || *got.Options.MaxPages != 5 {
+		t.Errorf("options=%+v", got.Options)
+	}
+}
+
+func TestHandleMap_202(t *testing.T) {
+	var got queue.JobPayload
+	ms := &mockStore{
+		createJobFunc: func(ctx context.Context, job *store.Job) (uuid.UUID, error) {
+			return uuid.MustParse("f47ac10b-58cc-4372-a567-0e02b2c3d479"), nil
+		},
+	}
+	mq := &mockQueue{
+		enqueueFunc: func(ctx context.Context, payload queue.JobPayload) error {
+			got = payload
+			return nil
+		},
+	}
+	h := NewHandler(ms, mq, 10, 3)
+	r := setupTestRouter(h)
+	body := `{"url":"https://example.com","options":{"max_urls":20}}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/map", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", w.Code)
+	}
+	if got.Kind != queue.KindMap {
+		t.Errorf("kind=%s", got.Kind)
+	}
+}
+
+func TestHandleExtract_501(t *testing.T) {
+	h := NewHandler(&mockStore{}, &mockQueue{}, 10, 3)
+	r := setupTestRouter(h)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/jobs/f47ac10b-58cc-4372-a567-0e02b2c3d479/extract", strings.NewReader(`{"prompt":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d", w.Code)
+	}
+}
+
+type mockExtractor struct {
+	out json.RawMessage
+	err error
+}
+
+func (m mockExtractor) Extract(ctx context.Context, markdown string, schema json.RawMessage, prompt string) (json.RawMessage, error) {
+	return m.out, m.err
+}
+
+func TestHandleExtract_200(t *testing.T) {
+	id := uuid.MustParse("f47ac10b-58cc-4372-a567-0e02b2c3d479")
+	ms := &mockStore{
+		getJobFunc: func(ctx context.Context, jobID uuid.UUID) (*store.Job, error) {
+			return &store.Job{
+				ID:     id,
+				Status: store.JobStatusCompleted,
+				Result: &scraper.Result{Markdown: "# Title\n\nBody", HTTPStatus: 200},
+			}, nil
+		},
+	}
+	h := NewHandler(ms, &mockQueue{}, 10, 3).WithExtractor(mockExtractor{out: json.RawMessage(`{"title":"Title"}`)}, true)
+	r := setupTestRouter(h)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/jobs/"+id.String()+"/extract", strings.NewReader(`{"prompt":"title"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleScrape_400(t *testing.T) {
 	ms := &mockStore{}
 	mq := &mockQueue{}
