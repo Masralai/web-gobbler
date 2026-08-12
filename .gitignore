@@ -4,6 +4,7 @@
 *.exe
 go.work
 go.work.sum
+coverprofile
 
 # ── Terraform ──
 *.tfstate
