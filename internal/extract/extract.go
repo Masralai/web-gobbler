@@ -30,14 +30,16 @@ type Config struct {
 }
 
 // FromEnv loads config. Empty APIKey means feature is off.
+// Defaults target Gemini's OpenAI-compatible endpoint (free-tier friendly).
+// Override with LLM_BASE_URL / LLM_MODEL for other OpenAI-compatible providers.
 func FromEnv() Config {
 	base := os.Getenv("LLM_BASE_URL")
 	if base == "" {
-		base = "https://api.openai.com/v1"
+		base = "https://generativelanguage.googleapis.com/v1beta/openai"
 	}
 	model := os.Getenv("LLM_MODEL")
 	if model == "" {
-		model = "gpt-4o-mini"
+		model = "gemini-2.5-flash"
 	}
 	return Config{
 		APIKey:  os.Getenv("LLM_API_KEY"),

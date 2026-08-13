@@ -42,6 +42,19 @@ func TestFromEnv_Disabled(t *testing.T) {
 	}
 }
 
+func TestFromEnv_GeminiDefaults(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "test-key")
+	t.Setenv("LLM_BASE_URL", "")
+	t.Setenv("LLM_MODEL", "")
+	cfg := FromEnv()
+	if cfg.BaseURL != "https://generativelanguage.googleapis.com/v1beta/openai" {
+		t.Fatalf("BaseURL=%q", cfg.BaseURL)
+	}
+	if cfg.Model != "gemini-2.5-flash" {
+		t.Fatalf("Model=%q", cfg.Model)
+	}
+}
+
 func TestClient_RequiresKey(t *testing.T) {
 	c := NewClient(Config{}, nil)
 	_, err := c.Extract(context.Background(), "x", nil, "p")

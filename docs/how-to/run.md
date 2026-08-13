@@ -108,16 +108,17 @@ Details: [browser-render.md](browser-render.md).
 
 ## Optional: LLM extract (P5)
 
-Set on the **api** service (e.g. in `docker-compose.yml` or an `.env` file Compose reads):
+Set on the **api** service via a project `.env` or the shell (Compose passes `LLM_*` through):
 
 ```bash
-LLM_API_KEY=sk-...
-# optional:
-# LLM_BASE_URL=https://api.openai.com/v1
-# LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=...   # Gemini API key from Google AI Studio
+# optional overrides:
+# LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+# LLM_MODEL=gemini-2.5-flash
+# or OpenAI: LLM_BASE_URL=https://api.openai.com/v1  LLM_MODEL=gpt-4o-mini
 ```
 
-Then restart API and, after a markdown job completes:
+Then recreate the API (`docker compose up -d --force-recreate api`) and, after a markdown job completes:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/jobs/<job_id>/extract \

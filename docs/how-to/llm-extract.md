@@ -9,8 +9,10 @@ Set on the **API** process:
 | Env | Required | Default |
 |-----|----------|---------|
 | `LLM_API_KEY` | yes | unset → feature off (`501`) |
-| `LLM_BASE_URL` | no | `https://api.openai.com/v1` |
-| `LLM_MODEL` | no | `gpt-4o-mini` |
+| `LLM_BASE_URL` | no | `https://generativelanguage.googleapis.com/v1beta/openai` (Gemini) |
+| `LLM_MODEL` | no | `gemini-2.5-flash` |
+
+Defaults use Gemini’s free-tier OpenAI-compatible API. Override `LLM_BASE_URL` / `LLM_MODEL` for OpenAI or any other compatible server.
 
 Without a key, scrape/crawl/map are unchanged.
 

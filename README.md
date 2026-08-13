@@ -16,7 +16,7 @@ Submit scraping jobs via HTTP, process them asynchronously through a worker pool
 > curl http://localhost:8080/api/v1/health
 > ```
 >
-> Full run guide (crawl, browser, LLM extract, tests): **[docs/how-to/run.md](docs/how-to/run.md)**. Product phases: **[spec.md](spec.md)**.
+> End-to-end tutorial (scrape → LLM extract): **[docs/how-to/getting-started.md](docs/how-to/getting-started.md)**. Full run guide (crawl, browser, tests): **[docs/how-to/run.md](docs/how-to/run.md)**. Product phases: **[spec.md](spec.md)**.
 > For a local AWS-shaped sandbox ($0): **`./scripts/floci-up.sh`** — see [Floci sandbox](#floci-sandbox-local-aws-0).
 
 ## Architecture

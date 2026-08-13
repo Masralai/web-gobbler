@@ -1,23 +1,23 @@
 # Getting started with Web Gobbler
 
-In this tutorial you will submit your first scraping job, track its progress, and retrieve the extracted content — all on your local machine.
+In this tutorial you will start Web Gobbler locally, scrape a page to markdown, then run optional LLM extract on that job — end to end on your machine.
 
-For the full operator runbook (crawl, map, browser, LLM extract, feature matrix), see **[How to run](../how-to/run.md)**.
+For crawl, map, JS render, and the feature matrix, see **[How to run](run.md)**.
 
 ## What you will learn
 
 - How to start the Web Gobbler stack with Docker Compose
-- How to submit a scraping job via the REST API
-- How to poll for results until the job completes
-- How to view scraped content (links, headers, paragraphs)
-- How to run the test suite
-- How to tear everything down
+- How to submit a scraping job and poll until it completes
+- How to read LLM-ready markdown from the job result
+- How to enable and call optional LLM extract (`POST /jobs/:id/extract`)
+- How to tear the stack down
 
 ## Prerequisites
 
-- **Go 1.26+** — verify with `go version`
 - **Docker and Docker Compose** — verify with `docker compose version`
-- Ports 8080, 5432, 6379, 9090, and 3000 free on your host
+- Ports **8080**, **5432**, **6379**, **9090**, and **3000** free on your host
+- (Optional, for LLM extract) A **Gemini API key** (default) — or any OpenAI-compatible provider if you override base URL/model
+- (Optional, for running Go tests later) **Go 1.26+**
 
 > [!NOTE]
 > If you use macOS you can install Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop). On Linux, install the `docker-compose-plugin` package for your distribution.
@@ -29,35 +29,35 @@ Clone the repository and start all services:
 ```bash
 git clone https://github.com/Masralai/web-gobbler
 cd web-gobbler
-docker compose up -d
+docker compose up -d --build
 ```
 
 Docker Compose starts six services:
 
-| Service     | Purpose                          | Port |
-|-------------|----------------------------------|------|
-| `postgres`  | Job storage (PostgreSQL 16)      | 5432 |
-| `redis`     | Job queue (Redis 7)              | 6379 |
-| `api`       | REST API (Gin)                   | 8080 |
-| `worker`    | Background scraper pool          | —    |
-| `prometheus`| Metrics collection               | 9090 |
-| `grafana`   | Metrics dashboard                | 3000 |
+| Service      | Purpose                     | Port |
+|--------------|-----------------------------|------|
+| `postgres`   | Job storage (PostgreSQL 16) | 5432 |
+| `redis`      | Job queue (Redis 7)         | 6379 |
+| `api`        | REST API (Gin)              | 8080 |
+| `worker`     | Background scraper pool     | —    |
+| `prometheus` | Metrics collection          | 9090 |
+| `grafana`    | Metrics dashboard           | 3000 |
 
 > [!NOTE]
-> For AWS-shaped local practice (Terraform → Floci), use `./scripts/floci-up.sh` instead — see [How to run](../how-to/run.md#ways-to-run). Do not run Compose `api` and Floci ECS on port **8080** at the same time.
+> For AWS-shaped local practice (Terraform → Floci), use `./scripts/floci-up.sh` instead — see [How to run](run.md#ways-to-run). Do not run Compose `api` and Floci ECS on port **8080** at the same time.
 
-Wait for all services to become healthy:
+Wait for services to become healthy:
 
 ```bash
 docker compose ps
 ```
 
-Every service should show `Up` and a green `(healthy)` status. This usually takes 5–10 seconds.
+Every service should show `Up` and `(healthy)`. This usually takes 5–10 seconds.
 
 ## Step 2 — Verify the API is running
 
 ```bash
-curl http://localhost:8080/api/v1/health
+curl -s http://localhost:8080/api/v1/health
 ```
 
 You should see:
@@ -67,14 +67,14 @@ You should see:
 ```
 
 > [!TIP]
-> If you see `"status":"degraded"` wait a few seconds and try again. The API starts before PostgreSQL and Redis finish their initialisation.
+> If you see `"status":"degraded"` wait a few seconds and try again. The API can start before PostgreSQL and Redis finish initialising.
 
 ## Step 3 — Submit a scraping job
 
-Submit a job to scrape [example.com](https://example.com) for LLM-ready markdown (and links):
+Scrape [example.com](https://example.com) for markdown (and links):
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/scrape \
+curl -s -X POST http://localhost:8080/api/v1/scrape \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -97,25 +97,18 @@ The API responds with `202 Accepted`:
 }
 ```
 
-Copy the `job_id` value — you will need it in the next step. The `poll_url` tells you where to check for results.
+Copy the `job_id` — you need it for polling and for LLM extract.
 
-## Step 4 — Poll for results
-
-The worker has already dequeued your job from Redis, scraped the page, and stored the result. Poll the job endpoint to see the outcome:
+## Step 4 — Poll until the job completes
 
 ```bash
-curl http://localhost:8080/api/v1/jobs/f47ac10b-58cc-4372-a567-0e02b2c3d479
+JOB_ID=f47ac10b-58cc-4372-a567-0e02b2c3d479   # replace with yours
+curl -s "http://localhost:8080/api/v1/jobs/$JOB_ID"
 ```
 
-Replace the ID with the one you received in Step 3.
+While the job is running you may see `"status":"queued"` or `"processing"`. Poll every 2–3 seconds until `"status":"completed"` (or `"failed"`).
 
-When the job is still running you see:
-
-```json
-{"job_id":"f47ac10b-...","status":"queued","created_at":"..."}
-```
-
-When the job finishes the status changes to `"completed"` and the response includes the scraped content:
+When complete, the response includes markdown (and links if you requested them):
 
 ```json
 {
@@ -126,50 +119,92 @@ When the job finishes the status changes to `"completed"` and the response inclu
   "completed_at": "2025-09-01T10:32:03Z",
   "duration_ms": 1240,
   "results": {
-    "links": ["https://www.iana.org/domains/example"],
-    "headers": ["Example Domain"],
-    "paragraphs": ["This domain is for use in illustrative examples in documents..."]
+    "markdown": "# Example Domain\n\nThis domain is for use in illustrative examples...",
+    "links": ["https://www.iana.org/domains/example"]
   },
   "meta": {
     "links_count": 1,
-    "headers_count": 1,
-    "paragraphs_count": 1,
     "http_status": 200,
     "retries_used": 0
   }
 }
 ```
 
+Confirm `results.markdown` is present — LLM extract in the next steps needs it.
+
 > [!TIP]
-> Poll every 2–3 seconds. Most jobs complete within 1–2 seconds. Increase `timeout_seconds` for slow websites.
+> Most jobs finish in 1–2 seconds. Increase `timeout_seconds` for slow sites. Other extract types (`headers`, `paragraphs`, `html`, `raw_html`) are documented in [How to run](run.md).
 
-## Step 5 — View the Grafana dashboard
+## Step 5 — Enable LLM extract
 
-Open [http://localhost:3000](http://localhost:3000) in your browser. Grafana starts with a pre-provisioned Prometheus datasource and dashboard.
+Optional **one-shot** structured extract over the markdown you already scraped. Not an agent (no tools, browse, or search). Without a key, `POST /jobs/:id/extract` returns **501**.
 
-1. Log in with **admin** / **admin** (skip the password change prompt).
-2. Navigate to **Dashboards** → **GoScrape Dashboard** (bundled dashboard title).
-3. You will see five panels:
-   - **Jobs per minute** — queued, completed, and failed jobs over time
-   - **Job duration (P50/P95/P99)** — how long scrapes take
-   - **Queue depth** — pending jobs in Redis
-   - **HTTP error rate** — non-2xx responses grouped by type
-   - **Retries total** — retry attempts across all jobs
-
-Submit a few more jobs from Step 3 and watch the panels update in real time (Prometheus scrapes every 15 seconds).
-
-## Step 6 — Run the tests
+Set the key on the **api** service via a project `.env` file (Compose reads it automatically) or your shell:
 
 ```bash
-# Unit tests (scraper + API handlers)
-go test -race -cover ./...
+# in the repo root — .env is gitignored if you add one, or export in the shell
+export LLM_API_KEY=...   # Gemini key from Google AI Studio
+# defaults (Gemini free-tier friendly):
+# LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+# LLM_MODEL=gemini-2.5-flash
+# override both for OpenAI or a local OpenAI-compatible server
+```
 
-# Integration tests (spins up real PostgreSQL + Redis containers)
+Recreate the API so it picks up the env:
+
+```bash
+docker compose up -d --force-recreate api
+```
+
+Check logs for something like `LLM extract enabled`:
+
+```bash
+docker compose logs api | tail -20
+```
+
+Details and crawl-per-page behavior: [LLM extract](llm-extract.md).
+
+## Step 6 — Run LLM extract on the job
+
+Use the same completed `JOB_ID` from Step 4:
+
+```bash
+curl -s -X POST "http://localhost:8080/api/v1/jobs/$JOB_ID/extract" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Extract the page title",
+    "schema": {
+      "type": "object",
+      "properties": { "title": { "type": "string" } },
+      "required": ["title"]
+    }
+  }'
+```
+
+Successful response:
+
+```json
+{
+  "job_id": "f47ac10b-...",
+  "extracted": { "title": "Example Domain" }
+}
+```
+
+The scrape job’s markdown in the database is unchanged. If extract fails, the original job result remains.
+
+## Optional — Grafana and tests
+
+Open [http://localhost:3000](http://localhost:3000) (admin / admin) for the bundled dashboard — see [grafana-dashboard.md](grafana-dashboard.md).
+
+To run tests (needs Go 1.26+):
+
+```bash
+go test -race -cover ./...
 docker compose up -d postgres redis
 go test -tags=integration -race -v ./test/integration/...
 ```
 
-All 33 unit tests and 12 integration tests should pass.
+Smoke more of the API: `./scripts/feature-matrix.sh http://localhost:8080` — see [How to run](run.md#smoke-test-everything).
 
 ## Step 7 — Tear down
 
@@ -177,15 +212,14 @@ All 33 unit tests and 12 integration tests should pass.
 docker compose down -v
 ```
 
-The `-v` flag removes the named volumes so PostgreSQL and Redis data is cleaned up. Omit `-v` if you want to keep the data for your next session.
+The `-v` flag removes named volumes (Postgres/Redis data). Omit `-v` to keep data for the next session.
 
 ## What you have accomplished
 
 - Started the full Web Gobbler stack locally
-- Submitted an asynchronous scraping job
-- Polled the API until the job completed
-- Viewed scraped content (links, headers, paragraphs)
-- Explored the Grafana dashboard
-- Verified the test suite passes
+- Submitted an asynchronous scrape and polled until completion
+- Retrieved LLM-ready markdown from the job result
+- Enabled and called optional one-shot LLM extract
+- Torn the stack down cleanly
 
-You are now ready to use Web Gobbler for your own scraping tasks. Continue to the [How-to guides](../how-to/) for production deployment and advanced configuration.
+Next: [How to run](run.md) for crawl, map, browser render, and the feature matrix; [deploy-aws.md](deploy-aws.md) for production.
