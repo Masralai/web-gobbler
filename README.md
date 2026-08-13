@@ -49,7 +49,7 @@ flowchart LR
 - Health checks — liveness/readiness with DB + Redis status
 - SSRF protection — private IP ranges blocked, max 5 redirects enforced
 - Security hardening — body size limit (1 MB), security headers, sentinel errors
-- Production-ready — distroless Docker images, Terraform for AWS, CI/CD
+- Production-ready — distroless Docker images, Terraform for AWS, GitHub Actions CI
 
 ## Local development
 
@@ -354,27 +354,17 @@ This provisions VPC, RDS PostgreSQL, ElastiCache Redis, ECR repositories, ECS Fa
 > [!WARNING]
 > Terraform creates real AWS resources. Review the plan carefully before applying. Estimated monthly cost: ~$60–100 for the full stack.
 
-### CI/CD
+### CI
 
-Push to `main` triggers the GitHub Actions pipeline:
+GitHub Actions runs **CI only** (`.github/workflows/ci.yml`) on pushes and pull requests to `main`:
 
-1. Lint and vet
-2. Vulnerability check (govulncheck)
-3. Unit tests
-4. Integration tests
-5. Build Docker images (api + worker)
-6. Push to ECR
-7. Register new ECS task definitions
-8. Rolling deploy (api → worker)
-9. Health check
+1. `go vet`
+2. Advisory `govulncheck` (non-blocking)
+3. `go build` for api + worker
+4. Unit tests (`go test -race -cover ./...`)
+5. Integration tests (Compose Postgres + Redis)
 
-### Required GitHub secrets
-
-| Secret | Description |
-|--------|-------------|
-| `AWS_ACCESS_KEY_ID` | IAM user access key |
-| `AWS_SECRET_ACCESS_KEY` | IAM user secret key |
-| `ALB_DNS` | ALB DNS name for health checks |
+There is **no automatic ECS deploy** from Actions today (no live default AWS stack). Practice the Terraform graph locally with Floci (`./scripts/floci-up.sh`). Real AWS: [docs/how-to/deploy-aws.md](docs/how-to/deploy-aws.md) (Terraform + manual image push; optional future OIDC CD).
 
 ## Environment variables
 
@@ -430,7 +420,7 @@ Push to `main` triggers the GitHub Actions pipeline:
 ├── test/
 │   ├── integration/     Testcontainers integration tests
 │   └── load/            k6 load test scripts
-├── .github/workflows/   CI/CD pipeline
+├── .github/workflows/   CI (test/build)
 ├── docker-compose.yml   Local development (+ sandbox profile)
 └── README.md
 ```

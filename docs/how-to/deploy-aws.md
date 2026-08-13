@@ -84,30 +84,13 @@ docker build -f docker/Dockerfile.worker -t $(terraform output -raw worker_image
 docker push $(terraform output -raw worker_image_url)
 ```
 
-## Step 4 — Configure GitHub Actions secrets
+## Step 4 — GitHub Actions (CI only)
 
-In your GitHub repository settings, add these secrets:
+This repository’s Actions workflow (`.github/workflows/ci.yml`) runs **vet, build, unit, and integration tests** on pushes and pull requests to `main`. It does **not** deploy to ECS.
 
-| Secret | Value |
-|--------|-------|
-| `AWS_ACCESS_KEY_ID` | IAM access key |
-| `AWS_SECRET_ACCESS_KEY` | IAM secret key |
-| `ALB_DNS` | ALB DNS name (`terraform output -raw alb_dns`) |
+Deploy to real AWS with the Terraform + Docker steps above (build/push images to ECR, then force a new ECS deployment or update task definitions). When you add automated CD later, prefer [OIDC to AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws) over long-lived access keys.
 
-Push to the `main` branch to trigger the CI/CD pipeline:
-
-```
-git push origin main
-```
-
-The pipeline:
-
-1. Runs `go vet`, unit tests, and integration tests
-2. Checks for vulnerabilities with `govulncheck`
-3. Builds and pushes both Docker images to ECR
-4. Registers new ECS task definitions with the updated images
-5. Performs a rolling deployment (API first, then worker)
-6. Waits for the health check to pass
+For a $0 AWS-shaped practice path, use Floci instead: `./scripts/floci-up.sh`.
 
 ## Step 5 — Verify the deployment
 

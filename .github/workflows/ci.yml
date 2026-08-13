@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Vulnerability check (advisory)
+        continue-on-error: true
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Build
+        run: go build -o /dev/null ./cmd/api ./cmd/worker
+
+      - name: Unit tests
+        run: go test -race -cover ./...
+
+      - name: Integration tests
+        run: |
+          docker compose up -d postgres redis
+          sleep 5
+          go test -tags=integration -race -v ./test/integration/...
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down
