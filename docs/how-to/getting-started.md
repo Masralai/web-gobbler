@@ -1,4 +1,4 @@
-# Getting started with GoScrape
+# Getting started with Web Gobbler
 
 In this tutorial you will submit your first scraping job, track its progress, and retrieve the extracted content — all on your local machine.
 
@@ -6,7 +6,7 @@ For the full operator runbook (crawl, map, browser, LLM extract, feature matrix)
 
 ## What you will learn
 
-- How to start the GoScrape stack with Docker Compose
+- How to start the Web Gobbler stack with Docker Compose
 - How to submit a scraping job via the REST API
 - How to poll for results until the job completes
 - How to view scraped content (links, headers, paragraphs)
@@ -42,6 +42,9 @@ Docker Compose starts six services:
 | `worker`    | Background scraper pool          | —    |
 | `prometheus`| Metrics collection               | 9090 |
 | `grafana`   | Metrics dashboard                | 3000 |
+
+> [!NOTE]
+> For AWS-shaped local practice (Terraform → Floci), use `./scripts/floci-up.sh` instead — see [How to run](../how-to/run.md#ways-to-run). Do not run Compose `api` and Floci ECS on port **8080** at the same time.
 
 Wait for all services to become healthy:
 
@@ -145,7 +148,7 @@ When the job finishes the status changes to `"completed"` and the response inclu
 Open [http://localhost:3000](http://localhost:3000) in your browser. Grafana starts with a pre-provisioned Prometheus datasource and dashboard.
 
 1. Log in with **admin** / **admin** (skip the password change prompt).
-2. Navigate to **Dashboards** → **GoScrape**.
+2. Navigate to **Dashboards** → **GoScrape Dashboard** (bundled dashboard title).
 3. You will see five panels:
    - **Jobs per minute** — queued, completed, and failed jobs over time
    - **Job duration (P50/P95/P99)** — how long scrapes take
@@ -178,11 +181,11 @@ The `-v` flag removes the named volumes so PostgreSQL and Redis data is cleaned 
 
 ## What you have accomplished
 
-- Started the full GoScrape stack locally
+- Started the full Web Gobbler stack locally
 - Submitted an asynchronous scraping job
 - Polled the API until the job completed
 - Viewed scraped content (links, headers, paragraphs)
 - Explored the Grafana dashboard
 - Verified the test suite passes
 
-You are now ready to use GoScrape for your own scraping tasks. Continue to the [How-to guides](../how-to/) for production deployment and advanced configuration.
+You are now ready to use Web Gobbler for your own scraping tasks. Continue to the [How-to guides](../how-to/) for production deployment and advanced configuration.

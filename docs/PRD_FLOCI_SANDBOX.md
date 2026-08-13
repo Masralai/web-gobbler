@@ -86,27 +86,41 @@ Order of attack per resource group:
 2. If Floci errors or returns unusable values, degrade **that attribute only** by the narrowest sane change.
 3. Record each negotiated downgrade so the sandbox's deviation from prod stays *known and small*.
 
-| Resource / attribute (prod) | Attempt (as-is) | Negotiated fallback (only if rejected) |
-|---|---|---|
-| VPC / subnets / IGW / SG / route tables | as-is (Floci EC2/ECS backs VPC) | none |
-| `aws_db_instance` (postgres 16, snapshot, encryption) | as-is | `deploy_mode=floci`: drop `final_snapshot` / `storage_encrypted`; `storage_type=gp2`, `backup_retention=0`, no auto-minor-upgrade to match Floci's read-back (idempotency); `password` from `var.db_master_password` instead of `random_password` |
-| `aws_db_parameter_group` | as-is | `lifecycle.ignore_changes=[parameter, tags, tags_all]` (Floci drops on read-back) |
-| `aws_elasticache_subnet_group` | as-is | omitted under `floci` (Floci: `CreateCacheSubnetGroup not supported`) |
-| `aws_elasticache_replication_group` (redis, auth, transit encryption) | as-is | `deploy_mode=floci`: `auth_token=null`, `transit_encryption_enabled=false`, `num_cache_clusters=0` (Floci can't `IncreaseReplicaCount`), endpoint via `floci-valkey-<rgid>` container name (Floci returns no `primary_endpoint_address`); `lifecycle.ignore_changes=[engine, tags, tags_all]` |
-| `aws_ecr_repository` x2 | as-is (real `registry:2`) | none |
-| IAM managed-policy attachments (`CloudWatchLogsFullAccess`) | as-is | inline policy under `floci` (managed policy ARN absent in Floci IAM) |
-| `aws_ecs_cluster` + task definitions | as-is (FARGATE / awsvpc attempt) | `network_mode = "bridge"`, `requires_compatibilities` / `launch_type` omitted (compute layer, issue #3) |
-| task logs | `awslogs` → CloudWatch | omit `logConfiguration` under floci (Docker default `json-file`; Floci drops explicit config on read-back) (compute layer, issue #3) |
-| config injection | `secrets` from SecretsManager | inline `environment` vars (compute layer, issue #3) |
-| ALB + target group + listener | as-is (`load_balancer` block) | omitted under `floci` (Floci ELBv2 rejects with `InvalidClientTokenId`); expose API via `hostPort: 8080` (compute layer, issue #3) |
-| worker auto-scaling / SNS alarms | as-is | omitted under `floci` (Floci: `RegisterScalableTarget not supported`); SNS topic kept |
-| 103 | `GET http://localhost:8080/api/v1/health` | returns {"status":"ok","db":"ok","redis":"ok"} (attempt) | hangs at DB dial: Floci creates task on `NetworkMode=bridge` with published `hostPort: 8080`, then attaches `web-gobbler_default` network after container start; app starts on bridge-only, RDS proxy at `172.18.0.2:7001` unreachable, `pool.Ping` with `context.Background()` has no timeout → hangs; worker (single-homed, no hostPort) and dual-homed pgx probe both work; root cause is network attach ordering, not dual-homing per se; mitigated by `ConnectTimeout` + 60s Ping retry in `store.New` (compute layer, issue #3) |
-| state backend | S3 | S3 **re-pointed at Floci** via `backend.floci.hcl` (`endpoint=http://localhost:4566`, `access_key/secret_key=test`, `skip_*` validation, `force_path_style`); `-backend-config` cannot change backend type, so bucket `goscrape-terraform-state` must pre-exist (state persists in `floci_data` volume) |
-| provider configuration | as-is | `deploy_mode=floci`: region `us-east-1`, static `test`/`test` creds, `skip_credentials_validation`/`skip_region_validation`/`skip_requesting_account_id`, `dynamic endpoints` for ec2/ecs/ecr/elasticache/rds/iam/logs/sts/secretsmanager/sns/cloudwatch/elbv2/autoscaling (missing endpoints silently hit real AWS with dummy creds) |
+| Resource / attribute (prod) | Attempt (as-is) | Negotiated fallback (only if rejected) | Issue #6 status |
+|---|---|---|---|
+| VPC / subnets / IGW / SG / route tables | as-is (Floci EC2/ECS backs VPC) | none | **honored as-is** — provisioned under floci |
+| `aws_db_instance` (postgres 16, snapshot, encryption) | as-is | `deploy_mode=floci`: drop `final_snapshot` / `storage_encrypted`; `storage_type=gp2`, `backup_retention=0`, no auto-minor-upgrade to match Floci's read-back (idempotency); `password` from `var.db_master_password` instead of `random_password` | **fallback kept** — Floci read-back/idempotency required these |
+| `aws_db_parameter_group` | as-is | `lifecycle.ignore_changes=[parameter, tags, tags_all]` (Floci drops on read-back) | **fallback kept** |
+| `aws_elasticache_subnet_group` | as-is | omitted under `floci` (Floci: `CreateCacheSubnetGroup not supported`) | **fallback kept** — API rejection observed |
+| `aws_elasticache_replication_group` (redis, auth, transit encryption) | as-is | `deploy_mode=floci`: `auth_token=null`, `transit_encryption_enabled=false`, `num_cache_clusters=0` (Floci can't `IncreaseReplicaCount`), endpoint via `floci-valkey-<rgid>` container name (Floci returns no `primary_endpoint_address`); `lifecycle.ignore_changes=[engine, tags, tags_all]` | **fallback kept** — Valkey container + no `primary_endpoint_address` confirmed |
+| `aws_ecr_repository` x2 | as-is (real `registry:2`) | none | **honored as-is** — local registry on `:5100` |
+| IAM managed-policy attachments (`CloudWatchLogsFullAccess`) | as-is | inline policy under `floci` (managed policy ARN absent in Floci IAM) | **fallback kept** |
+| `aws_ecs_cluster` + task definitions | as-is (FARGATE / awsvpc attempt) | `network_mode = "bridge"`, `requires_compatibilities` / `launch_type` omitted under floci (compute layer, issue #3) | **fallback kept** — bridge tasks run; Fargate/awsvpc not usable |
+| task logs | `awslogs` → CloudWatch | omit `logConfiguration` under floci (Docker default `json-file`; Floci drops explicit config on read-back) (compute layer, issue #3) | **fallback kept** — explicit `json-file` dropped on read-back |
+| config injection | `secrets` from SecretsManager | inline `environment` vars under floci (compute layer, issue #3) | **fallback kept** |
+| ALB + target group + listener | as-is (`load_balancer` block) | omitted under `floci` (Floci ELBv2 rejects with `InvalidClientTokenId`); expose API via `hostPort: 8080` (compute layer, issue #3) | **fallback kept** — ALB gated `count=aws` |
+| worker auto-scaling / SNS alarms | as-is | omitted under `floci` (Floci: `RegisterScalableTarget not supported`); SNS topic kept | **fallback kept** — SNS retained; autoscaling gated |
+| API health after ECS start | `GET http://localhost:8080/api/v1/health` → db+redis ok | Floci attaches `web-gobbler_default` after bridge+`hostPort` start; mitigated by `ConnectTimeout` + Ping retry in `store.New` (issue #3) | **mitigation verified** — health returns ok in sandbox |
+| state backend | S3 | S3 **re-pointed at Floci** via `backend.floci.hcl` (not local backend; type cannot change via `-backend-config`); state persists in `floci_data` volume | **fallback kept** — S3-to-Floci, not local state |
+| provider configuration | as-is | `deploy_mode=floci`: region `us-east-1`, static `test`/`test` creds, skip validations, `dynamic endpoints` for required services | **fallback kept** |
 
 Pre-existing provider v5 incompatibilities fixed (apply to both modes): `replication_group_description` → `description` (elasticache.tf); `parameters` on `aws_db_instance` → `aws_db_parameter_group` (rds.tf).
 
-Floci read-back quirks (data plane idempotency): SG `ingress`/`egress`, `tags`/`tags_all`, param-group `parameter` blocks are applied to Floci but not returned on describe, so `lifecycle.ignore_changes` suppresses perpetual re-adds.
+Floci read-back quirks (data plane idempotency): SG `ingress`/`egress`, `tags`/`tags_all`, param-group `parameter` blocks are applied to Floci but not returned on describe, so `lifecycle.ignore_changes` suppresses perpetual re-adds. **Terraform cannot make `lifecycle` conditional on `deploy_mode`**, so these ignore rules also apply under `aws` — residual risk when a live AWS stack exists (SG/task-def drift may not be corrected by apply). No attribute that Floci fully honored was left unnecessarily degraded.
+
+#### Issue #6 — prod regression (static; no live AWS)
+
+There is **no live web-gobbler AWS stack** at audit time, so `terraform plan -var deploy_mode=aws` against real state is **deferred** until prod exists.
+
+Static guard completed instead:
+
+- `deploy_mode` defaults to `"aws"`.
+- Under `deploy_mode=aws`, Fargate/`awsvpc`/`awslogs`/SecretsManager secrets/ALB/autoscaling/`gp3`/encrypted RDS/ElastiCache auth+transit remain on the aws branches (verified by marker scan of `terraform/*.tf`).
+- `terraform validate` succeeds.
+- Diff from pre-floci terraform → current is additive `deploy_mode` branching plus the shared provider-v5 fixes above (aws path not stripped of prod attributes).
+
+When live AWS exists: run `terraform plan -var deploy_mode=aws` against that state and confirm no unexpected diffs beyond intentional shared fixes.
+
 
 ### Interface contracts (sandbox)
 
@@ -116,13 +130,13 @@ Floci read-back quirks (data plane idempotency): SG `ingress`/`egress`, `tags`/`
 
 ## Testing Decisions
 
-There are **no intentional product-feature Go changes** in this PRD. One compute-layer mitigation lives in `store.New` (ConnectTimeout + Ping retry for Floci's hostPort network-attach race; see downgrade row 103). Existing `test/` unit tests are otherwise unaffected. Testing is **infrastructure acceptance**, exercised end-to-end through the bootstrap script and Terraform:
+There are **no intentional product-feature Go changes** in this PRD. One compute-layer mitigation lives in `store.New` (ConnectTimeout + Ping retry for Floci's hostPort network-attach race; see downgrade table: API health after ECS start). Existing `test/` unit tests are otherwise unaffected. Testing is **infrastructure acceptance**, exercised end-to-end through the bootstrap script and Terraform:
 
 - A good test here verifies **external behavior only**: that a clean machine reaches a running, migrated, health-checked sandbox — not the internal wiring of the script or Terraform internals.
 - **Script e2e** — `scripts/floci-up.sh` runs green on a clean machine (Docker Desktop, no AWS creds). Includes the optional `--smoke-test` path (POST a scrape job → poll to `completed`; `GET /api/v1/jobs/:id` returns results).
 - **Idempotency** — `terraform apply -var deploy_mode=floci` re-run shows no diff.
 - **Health contract** — `GET http://localhost:8080/api/v1/health` returns `{"status":"ok","db":"ok","redis":"ok"}`, proving app ↔ Floci-backed RDS/ElastiCache wiring.
-- **Prod regression guard** — `terraform plan -var deploy_mode=aws` still matches today's prod plan, and `git diff` on `terraform/` shows only additive `deploy_mode` logic.
+- **Prod regression guard** — static: `deploy_mode` defaults to `aws` and aws-mode branches retain prod attributes (issue #6). Live `terraform plan -var deploy_mode=aws` deferred until a web-gobbler AWS stack exists.
 - **Dev-flow guard** — normal `docker compose up -d` is unchanged.
 - **Teardown** — `docker compose --profile sandbox down -v` removes all sandbox containers + volumes.
 - **Downgrade audit** — the negotiated-downgrade table records every deviation from prod with rationale.

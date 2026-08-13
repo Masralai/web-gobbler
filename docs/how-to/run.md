@@ -2,13 +2,27 @@
 
 Start the stack, scrape a page, and optionally enable crawl, JS render, or LLM extract.
 
+## Ways to run
+
+| Mode | Command | Use when |
+|------|---------|----------|
+| **Compose (recommended for app usage)** | `docker compose up -d` | Day-to-day scraping against local Postgres/Redis |
+| **Floci sandbox** | `./scripts/floci-up.sh` | Practice the AWS-shaped Terraform graph locally at $0 |
+
+Both expose the API at **http://localhost:8080**. Do **not** run Compose `api` and the Floci ECS API at the same time — they fight over port 8080.
+
+Floci details (prereqs, teardown, downgrades): [README — Floci sandbox](../../README.md#floci-sandbox-local-aws-0), [FLOCI_SANDBOX.md](../FLOCI_SANDBOX.md). Optional smoke: `./scripts/floci-up.sh --smoke-test`.
+
+The rest of this guide assumes **Compose** unless noted.
+
 ## Prerequisites
 
 - Docker + Docker Compose v2
-- Free ports: **8080**, **5432**, **6379**, **9090**, **3000**
+- Free ports: **8080**, **5432**, **6379**, **9090**, **3000** (Compose)
 - (Optional, for Go tests) Go **1.26+**
+- (Floci only) Terraform >= 1.6, AWS CLI v2, `bash` / `curl` / `python3`
 
-## Quick start
+## Quick start (Compose)
 
 ```bash
 git clone https://github.com/Masralai/web-gobbler
@@ -173,4 +187,5 @@ docker compose down -v
 
 - Tutorial: [../tutorials/getting-started.md](../tutorials/getting-started.md)
 - Product roadmap / phase log: [../../spec.md](../../spec.md)
-- AWS deploy: [deploy-aws.md](deploy-aws.md)
+- Floci sandbox (local AWS, $0): [../FLOCI_SANDBOX.md](../FLOCI_SANDBOX.md)
+- Real AWS deploy (when you have an account): [deploy-aws.md](deploy-aws.md)

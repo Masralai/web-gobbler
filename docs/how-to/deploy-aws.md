@@ -1,11 +1,16 @@
-# How to deploy GoScrape to AWS
+# How to deploy Web Gobbler to AWS
 
-This guide walks through provisioning the full infrastructure on AWS ECS Fargate and deploying the API and worker services.
+This guide walks through provisioning infrastructure on **real** AWS ECS Fargate and deploying the API and worker services.
+
+> [!IMPORTANT]
+> There is **no live web-gobbler AWS stack** in the default workflow today. To practice the same Terraform graph locally at **$0**, use the Floci sandbox instead: `./scripts/floci-up.sh` (see [run.md — Ways to run](run.md#ways-to-run) and [FLOCI_SANDBOX.md](../FLOCI_SANDBOX.md)).
+>
+> Use this guide only when you have real AWS credentials and intend to create billable resources. `deploy_mode` defaults to `"aws"` — do **not** pass `-backend-config=backend.floci.hcl` when targeting real AWS.
 
 ## Prerequisites
 
 - An AWS account with IAM permissions for ECS, ECR, RDS, ElastiCache, IAM, and EC2 (VPC)
-- Terraform 1.5+ installed — verify with `terraform version`
+- Terraform 1.6+ installed — verify with `terraform version`
 - Docker installed — verify with `docker version`
 - AWS credentials configured — verify with `aws sts get-caller-identity`
 
@@ -38,6 +43,7 @@ All variables are documented in `variables.tf` with descriptions and defaults.
 
 ```bash
 terraform init
+# deploy_mode defaults to "aws" — omit Floci backend overrides
 terraform plan
 terraform apply
 ```

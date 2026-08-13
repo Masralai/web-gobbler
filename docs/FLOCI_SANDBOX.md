@@ -60,18 +60,26 @@ Order of attack per resource group:
 2. If Floci errors or returns unusable values, degrade **that attribute only** by the narrowest sane change.
 3. Record each negotiated downgrade so the sandbox's deviation from prod stays *known and small*.
 
-| Resource / attribute (prod) | Attempt (as-is) | Negotiated fallback (only if rejected) |
-|---|---|---|
-| VPC / subnets / IGW / SG / route tables | as-is (Floci EC2/ECS backs VPC) | none |
-| `aws_db_instance` (postgres 16, snapshot, encryption) | as-is | drop `final_snapshot` / `storage_encrypted`; tune instance-class fields Floci ignores |
-| `aws_elasticache_replication_group` (redis, auth, transit encryption) | as-is | drop `auth_token` / `transit_encryption_enabled` (ACL auth discovered at runtime) |
-| `aws_ecr_repository` x2 | as-is (real `registry:2`) | none |
-| `aws_ecs_cluster` + task definitions | as-is (FARGATE / awsvpc attempt) | `network_mode = "bridge"`, `requires_compatibilities` / `launch_type` omitted |
-| task logs | `awslogs` → CloudWatch | `json-file` driver |
-| config injection | `secrets` from SecretsManager | inline `environment` vars |
-| ALB + target group + listener | as-is (`load_balancer` block) | drop the block; expose API via `hostPort: 8080` |
-| worker auto-scaling / SNS alarms | as-is | omit (Floci stores policies inert) |
-| state backend | S3 | local state for `deploy_mode=floci` |
+| Resource / attribute (prod) | Attempt (as-is) | Negotiated fallback (only if rejected) | Issue #6 status |
+|---|---|---|---|
+| VPC / subnets / IGW / SG / route tables | as-is | none | **honored as-is** |
+| `aws_db_instance` | as-is | floci: drop final snapshot/encryption; gp2; backup_retention=0; fixed password | **fallback kept** |
+| `aws_db_parameter_group` | as-is | `lifecycle.ignore_changes=[parameter, tags, tags_all]` | **fallback kept** |
+| `aws_elasticache_subnet_group` | as-is | omitted under floci (`CreateCacheSubnetGroup not supported`) | **fallback kept** |
+| `aws_elasticache_replication_group` | as-is | floci: no auth_token/transit encryption; `num_cache_clusters=0`; endpoint `floci-valkey-<rgid>` | **fallback kept** |
+| `aws_ecr_repository` x2 | as-is | none | **honored as-is** |
+| IAM `CloudWatchLogsFullAccess` | as-is | inline policy under floci | **fallback kept** |
+| ECS cluster + task defs | Fargate/awsvpc | floci: `bridge`; omit compatibilities/launch_type | **fallback kept** |
+| task logs | awslogs | floci: omit `logConfiguration` (Docker default json-file) | **fallback kept** |
+| config injection | SecretsManager secrets | floci: inline environment | **fallback kept** |
+| ALB + TG + listener | as-is | omitted under floci; `hostPort: 8080` | **fallback kept** |
+| worker autoscaling / SNS alarms | as-is | omit autoscaling under floci; SNS kept | **fallback kept** |
+| API health after ECS start | health db+redis ok | ConnectTimeout + Ping retry in `store.New` (hostPort race) | **mitigation verified** |
+| state backend | S3 | S3 re-pointed at Floci via `backend.floci.hcl` (not local state) | **fallback kept** |
+| provider | as-is | floci: dummy creds + dynamic endpoints | **fallback kept** |
+
+Canonical detail + residual notes: [`PRD_FLOCI_SANDBOX.md`](PRD_FLOCI_SANDBOX.md) (Fidelity strategy / Issue #6). No Floci-honored attribute was left unnecessarily degraded. Live `terraform plan -var deploy_mode=aws` is deferred until a web-gobbler AWS stack exists.
+
 
 ## 5. File Changes
 
@@ -106,7 +114,7 @@ Changes inside `terraform/` (default behavior stays identical; prod mode preserv
 - **`ecs.tf`** — task definitions and services use `count`/`dynamic` so Fargate/awsvpc/awslogs/SecretsManager apply under `aws`, and the section-4.2 fallbacks apply under `floci`. ALB block conditionally attached.
 - **`rds.tf` / `elasticache.tf`** — snapshot/encryption/auth attributes conditional on `deploy_mode`.
 - **`outputs.tf`** — add `rds_host/port`, `redis_host/port`, `api_url` (ALB DNS in aws mode; `http://localhost:8080` in floci mode).
-- **State**: use a committed `backend.floci.hcl` (local) swapped in during init for `deploy_mode=floci`.
+- **State**: `backend.floci.hcl` re-points the S3 backend at Floci (`endpoint=http://localhost:4566`); file is gitignored and written by `scripts/floci-up.sh` if missing.
 
 > This modifies `terraform/` (unavoidable for a single source of truth). Because `deploy_mode` defaults to `"aws"`, prod applies remain byte-identical.
 
@@ -141,7 +149,7 @@ New "Floci sandbox (local AWS, $0)" section: prerequisites, `./scripts/floci-up.
 2. `terraform apply -var deploy_mode=floci` is idempotent (re-run shows no diff).
 3. `POST /api/v1/scrape` reaches `completed`; `GET /api/v1/jobs/:id` returns results.
 4. `GET http://localhost:8080/api/v1/health` shows `{"status":"ok","db":"ok","redis":"ok"}`.
-5. Prod untouched: `terraform plan -var deploy_mode=aws` still matches today's prod plan and `git diff` on `terraform/` shows only additive `deploy_mode` logic.
+5. Prod untouched (static until live AWS): `deploy_mode` defaults to `aws`; aws-mode branches retain prod attributes; live plan deferred — see PRD Issue #6 audit.
 6. Normal dev flow `docker compose up -d` unchanged.
 7. `docker compose --profile sandbox down -v` removes all sandbox containers + volumes.
 8. The negotiated-downgrade table (section 4.2) records every deviation from prod with rationale.
