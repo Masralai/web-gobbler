@@ -1,6 +1,6 @@
 # Specification — Floci Local AWS Sandbox for web-gobbler
 
-**Status:** Draft v2 · **Owner:** web-gobbler · **Target:** local Windows (PowerShell 5.1) + Docker Desktop
+**Status:** Draft v2 · **Owner:** web-gobbler · **Target:** local Linux/macOS (bash) + Docker
 
 ## 1. Overview
 
@@ -16,7 +16,7 @@ To maximize learning value, the default stance is **prod-fidelity**: run the rea
 - Provision the full stack via one Terraform module targeting `http://localhost:4566` for $0.
 - Real engines where Floci gives fidelity: Postgres (RDS), Redis/Valkey (ElastiCache), Docker tasks (ECS), image registry (ECR).
 - One source of truth: a single `deploy_mode = "aws" | "floci"` variable; default mode stays byte-identical to current prod.
-- One-command bootstrap: `scripts/floci-up.ps1`.
+- One-command bootstrap: `scripts/floci-up.sh`.
 - **Learning parity**: the sandbox applies the same resource graph as prod (VPC → SG → RDS → ElastiCache → ECR → ECS → ALB), degrading only where Floci cannot emulate.
 
 **Non-goals**
@@ -27,14 +27,14 @@ To maximize learning value, the default stance is **prod-fidelity**: run the rea
 
 ## 3. Environment & Prerequisites
 
-- Windows, PowerShell 5.1+, Docker Desktop (Docker Engine) running, Terraform >= 1.6, `docker compose` v2.
+- Linux/macOS, bash, Docker Engine running, Terraform >= 1.6, `docker compose` v2.
 - Floci needs the Docker socket mounted to orchestrate the real containers it backs (RDS/ElastiCache/ECS/ECR).
 
 ## 4. Architecture
 
 ```
 ┌────────────────── host (localhost) ───────────────────────────┐
-│  scripts/floci-up.ps1                                         │
+│  scripts/floci-up.sh                                         │
 │    │  AWS_ENDPOINT_URL=http://localhost:4566  (dummy creds)    │
 │    ▼                                                           │
 │  Terraform ──terraform/ (deploy_mode=floci)──►  Floci :4566     │
@@ -110,7 +110,7 @@ Changes inside `terraform/` (default behavior stays identical; prod mode preserv
 
 > This modifies `terraform/` (unavoidable for a single source of truth). Because `deploy_mode` defaults to `"aws"`, prod applies remain byte-identical.
 
-### 5.3 Script `scripts/floci-up.ps1` (idempotent, parameterized)
+### 5.3 Script `scripts/floci-up.sh` (idempotent, parameterized)
 
 | Step | Action | Failure handling |
 |---|---|---|
@@ -123,21 +123,21 @@ Changes inside `terraform/` (default behavior stays identical; prod mode preserv
 | Discover | RDS/Redis host+port from terraform outputs and `aws rds describe-db-instances` / `aws elasticache describe-replication-groups` (`--endpoint-url http://localhost:4566`) | abort if empty |
 | Migrate | apply `migrations/000001_create_jobs_table.up.sql` into the discovered RDS via `psql` (or pipe through `docker exec -i <postgres-container> psql -U ... -d goscrape` via `docker ps` heuristic) | abort |
 | Health | poll `GET http://localhost:8080/api/v1/health` until 200 | report failure |
-| Smoke (optional) | `-SmokeTest`: POST a `/api/v1/scrape` job, poll to `completed` | report failure |
+| Smoke (optional) | `--smoke-test`: POST a `/api/v1/scrape` job, poll to `completed` | report failure |
 | Report | print URLs / creds / endpoints + teardown command | — |
 
 ### 5.4 `.gitignore`
 Add: `.floci-data/`, `terraform/backend.floci.hcl`, `terraform/*.tfplan`. Remove the `*.md` glob (so docs + this spec are trackable).
 
 ### 5.5 `README.md`
-New "Floci sandbox (local AWS, $0)" section: prerequisites, `powershell -ExecutionPolicy Bypass -File scripts/floci-up.ps1`, what it provisions, teardown (`docker compose --profile sandbox down -v`), explicit local-only note, link to the negotiated-downgrade table. Update project-structure tree with `scripts/` and `docs/`.
+New "Floci sandbox (local AWS, $0)" section: prerequisites, `./scripts/floci-up.sh`, what it provisions, teardown (`docker compose --profile sandbox down -v`), explicit local-only note, link to the negotiated-downgrade table. Update project-structure tree with `scripts/` and `docs/`.
 
 ## 6. Connection Strings (sandbox)
 - `DATABASE_URL=postgresql://goscrape_admin:devpass@localhost:<rds_port>/goscrape`
 - `REDIS_URL=redis://localhost:<redis_port>` (token appended if Floci enforces ACL auth — risk 8.3)
 
 ## 7. Acceptance Criteria
-1. `scripts/floci-up.ps1` runs green end-to-end on a clean machine (Docker Desktop, no AWS creds).
+1. `scripts/floci-up.sh` runs green end-to-end on a clean machine (Docker Desktop, no AWS creds).
 2. `terraform apply -var deploy_mode=floci` is idempotent (re-run shows no diff).
 3. `POST /api/v1/scrape` reaches `completed`; `GET /api/v1/jobs/:id` returns results.
 4. `GET http://localhost:8080/api/v1/health` shows `{"status":"ok","db":"ok","redis":"ok"}`.

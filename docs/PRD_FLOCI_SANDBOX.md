@@ -1,6 +1,6 @@
 # PRD — Floci Local AWS Sandbox for web-gobbler
 
-**Status:** Proposed · **Owner:** web-gobbler · **Source spec:** [`docs/FLOCI_SANDBOX.md`](FLOCI_SANDBOX.md) · **Target:** local Windows (PowerShell 5.1) + Docker Desktop
+**Status:** Proposed · **Owner:** web-gobbler · **Source spec:** [`docs/FLOCI_SANDBOX.md`](FLOCI_SANDBOX.md) · **Target:** local Linux/macOS (bash) + Docker
 
 ---
 
@@ -16,7 +16,7 @@ Provide a **free, local AWS-shaped sandbox** built on [Floci](https://floci.io) 
 
 The default stance is **prod-fidelity**: attempt the prod attributes as-is first, and degrade only the specific attributes Floci genuinely cannot honor. The deviation from prod stays *known and small* via a recorded negotiated-downgrade table.
 
-The whole environment is brought up with a **single command**: `scripts/floci-up.ps1` — preflight, start Floci, poll health, terraform init/apply in `deploy_mode=floci`, push images, discover endpoints, run migrations, health-check the API, and print a report.
+The whole environment is brought up with a **single command**: `scripts/floci-up.sh` — preflight, start Floci, poll health, terraform init/apply in `deploy_mode=floci`, push images, discover endpoints, run migrations, health-check the API, and print a report.
 
 ## User Stories
 
@@ -25,7 +25,7 @@ The whole environment is brought up with a **single command**: `scripts/floci-up
 3. As a developer, I want to run the **same** Terraform module for both prod and sandbox, so that there is one source of truth instead of two drifting configurations.
 4. As a developer, I want a single `deploy_mode = "aws" | "floci"` variable to select the target, so that switching environments is trivial and auditable.
 5. As a developer, I want `deploy_mode` to default to `"aws"`, so that the current production applies remain byte-identical and the sandbox never changes prod by accident.
-6. As a developer, I want a one-command bootstrap (`scripts/floci-up.ps1`) that takes a clean machine from nothing to a running, migrated sandbox, so that setup is repeatable and scriptable.
+6. As a developer, I want a one-command bootstrap (`scripts/floci-up.sh`) that takes a clean machine from nothing to a running, migrated sandbox, so that setup is repeatable and scriptable.
 7. As a developer, I want the script to be idempotent, so that re-running it produces no drift or duplicate resources.
 8. As a developer, I want RDS/Redis host and port discovered at runtime via terraform outputs, so that I never hardcode the dynamic local ports.
 9. As a developer, I want migrations applied automatically into the discovered Postgres, so that the API is immediately usable after bootstrap.
@@ -62,7 +62,7 @@ The implementation parameterizes the existing single Terraform module (no duplic
    - **`outputs.tf`** — add `rds_host`/`rds_port`, `redis_host`/`redis_port`, `api_url` (ALB DNS in aws mode; `http://localhost:8080` in floci mode).
    - **State** — a committed `backend.floci.hcl` (local) swapped in during init for `deploy_mode=floci`.
 
-3. **`scripts/floci-up.ps1`** — idempotent, parameterized end-to-end bootstrap:
+3. **`scripts/floci-up.sh`** — idempotent, parameterized end-to-end bootstrap:
    - **Preflight** → verify Docker + compose + port availability (abort on failure)
    - **Start** → `docker compose --profile sandbox up -d floci` (abort on failure)
    - **Ready** → poll `GET /_localstack/health` (max 120s, abort on timeout)
@@ -72,12 +72,12 @@ The implementation parameterizes the existing single Terraform module (no duplic
    - **Discover** → RDS/Redis host+port from terraform outputs and `aws rds describe-db-instances` / `aws elasticache describe-replication-groups` with `--endpoint-url http://localhost:4566` (abort if empty)
    - **Migrate** → apply `migrations/000001_create_jobs_table.up.sql` into the discovered RDS via `psql` or `docker exec` heuristic (abort on failure)
    - **Health** → poll `GET http://localhost:8080/api/v1/health` until 200 (report failure)
-   - **Smoke (optional)** → `-SmokeTest`: POST `/api/v1/scrape`, poll to `completed` (report failure)
+   - **Smoke (optional)** → `--smoke-test`: POST `/api/v1/scrape`, poll to `completed` (report failure)
    - **Report** → print URLs / creds / endpoints + teardown command
 
 4. **`.gitignore`** — add `.floci-data/`, `terraform/backend.floci.hcl`, `terraform/*.tfplan`; remove the `*.md` glob so docs + spec are trackable.
 
-5. **`README.md`** — new "Floci sandbox (local AWS, $0)" section: prerequisites, run command (`powershell -ExecutionPolicy Bypass -File scripts/floci-up.ps1`), what it provisions, teardown, local-only note, link to the negotiated-downgrade table; update the project-structure tree with `scripts/` and `docs/`.
+5. **`README.md`** — new "Floci sandbox (local AWS, $0)" section: prerequisites, run command (`./scripts/floci-up.sh`), what it provisions, teardown, local-only note, link to the negotiated-downgrade table; update the project-structure tree with `scripts/` and `docs/`.
 
 ### Fidelity strategy — attempt prod shape first, degrade on rejection
 
@@ -119,7 +119,7 @@ Floci read-back quirks (data plane idempotency): SG `ingress`/`egress`, `tags`/`
 There are **no intentional product-feature Go changes** in this PRD. One compute-layer mitigation lives in `store.New` (ConnectTimeout + Ping retry for Floci's hostPort network-attach race; see downgrade row 103). Existing `test/` unit tests are otherwise unaffected. Testing is **infrastructure acceptance**, exercised end-to-end through the bootstrap script and Terraform:
 
 - A good test here verifies **external behavior only**: that a clean machine reaches a running, migrated, health-checked sandbox — not the internal wiring of the script or Terraform internals.
-- **Script e2e** — `scripts/floci-up.ps1` runs green on a clean machine (Docker Desktop, no AWS creds). Includes the optional `-SmokeTest` path (POST a scrape job → poll to `completed`; `GET /api/v1/jobs/:id` returns results).
+- **Script e2e** — `scripts/floci-up.sh` runs green on a clean machine (Docker Desktop, no AWS creds). Includes the optional `--smoke-test` path (POST a scrape job → poll to `completed`; `GET /api/v1/jobs/:id` returns results).
 - **Idempotency** — `terraform apply -var deploy_mode=floci` re-run shows no diff.
 - **Health contract** — `GET http://localhost:8080/api/v1/health` returns `{"status":"ok","db":"ok","redis":"ok"}`, proving app ↔ Floci-backed RDS/ElastiCache wiring.
 - **Prod regression guard** — `terraform plan -var deploy_mode=aws` still matches today's prod plan, and `git diff` on `terraform/` shows only additive `deploy_mode` logic.

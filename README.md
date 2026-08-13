@@ -83,6 +83,43 @@ Migrations run automatically on API/worker startup (`store.Migrate`). No manual 
 
 See **[docs/how-to/run.md](docs/how-to/run.md)** for scrape/crawl/map examples, browser profile, LLM extract, and the feature-matrix script.
 
+## Floci sandbox (local AWS, $0)
+
+Practice the real AWS resource graph (VPC → RDS → ElastiCache → ECR → ECS) against a local [Floci](https://floci.io) endpoint — **no AWS account and no cloud spend**. This is **local-only**; it does not deploy to real AWS.
+
+Normal `docker compose up -d` is unchanged. The sandbox uses the `sandbox` compose profile and `deploy_mode=floci`.
+
+### Prerequisites
+
+- **Docker** (Compose v2) with the engine running
+- **Terraform** >= 1.6
+- **AWS CLI** v2 (talks to Floci at `http://localhost:4566` with dummy `test`/`test` credentials)
+- `curl`, `bash`, `python3` (smoke-test JSON parsing)
+
+### Run
+
+```bash
+./scripts/floci-up.sh
+# optional end-to-end scrape:
+./scripts/floci-up.sh --smoke-test
+```
+
+The script starts Floci, applies Terraform (`deploy_mode=floci`), builds/pushes api+worker images to the local registry, migrates Postgres, and polls `GET http://localhost:8080/api/v1/health`.
+
+### What it provisions
+
+Against Floci’s LocalStack-compatible API (backed by real Postgres, Valkey, Docker ECS tasks, and a local ECR registry): VPC/subnets/SGs, RDS PostgreSQL, ElastiCache/Valkey, ECR repos, ECS cluster + api/worker services (bridge/`hostPort: 8080` in the sandbox). ALB and worker autoscaling are omitted under Floci — see the downgrade table below.
+
+### Teardown
+
+```bash
+docker compose --profile sandbox down -v
+```
+
+### Negotiated downgrades
+
+Sandbox deviations from prod Terraform are recorded in the negotiated-downgrade table in **[docs/PRD_FLOCI_SANDBOX.md](docs/PRD_FLOCI_SANDBOX.md)** (Fidelity strategy section). Also see **[docs/FLOCI_SANDBOX.md](docs/FLOCI_SANDBOX.md)**.
+
 ## API documentation
 
 Base URL: `/api/v1`
@@ -386,10 +423,13 @@ Push to `main` triggers the GitHub Actions pipeline:
 │   └── metrics/         Prometheus metric registration
 ├── migrations/          SQL migration files
 ├── docker/              Dockerfiles, Prometheus config, Grafana dashboard
-├── terraform/           AWS infrastructure as code
+├── docs/                Specs, how-tos, Floci sandbox PRD
+├── scripts/             Bootstrap helpers (e.g. floci-up.sh)
+├── terraform/           AWS / Floci infrastructure as code
 ├── test/
 │   ├── integration/     Testcontainers integration tests
 │   └── load/            k6 load test scripts
 ├── .github/workflows/   CI/CD pipeline
-├── docker-compose.yml   Local development environment
+├── docker-compose.yml   Local development (+ sandbox profile)
 └── README.md
+```
