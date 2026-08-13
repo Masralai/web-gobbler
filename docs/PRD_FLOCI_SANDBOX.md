@@ -96,11 +96,11 @@ Order of attack per resource group:
 | `aws_ecr_repository` x2 | as-is (real `registry:2`) | none |
 | IAM managed-policy attachments (`CloudWatchLogsFullAccess`) | as-is | inline policy under `floci` (managed policy ARN absent in Floci IAM) |
 | `aws_ecs_cluster` + task definitions | as-is (FARGATE / awsvpc attempt) | `network_mode = "bridge"`, `requires_compatibilities` / `launch_type` omitted (compute layer, issue #3) |
-| task logs | `awslogs` → CloudWatch | `json-file` driver (compute layer, issue #3) |
+| task logs | `awslogs` → CloudWatch | omit `logConfiguration` under floci (Docker default `json-file`; Floci drops explicit config on read-back) (compute layer, issue #3) |
 | config injection | `secrets` from SecretsManager | inline `environment` vars (compute layer, issue #3) |
 | ALB + target group + listener | as-is (`load_balancer` block) | omitted under `floci` (Floci ELBv2 rejects with `InvalidClientTokenId`); expose API via `hostPort: 8080` (compute layer, issue #3) |
 | worker auto-scaling / SNS alarms | as-is | omitted under `floci` (Floci: `RegisterScalableTarget not supported`); SNS topic kept |
-| 103 | `GET http://localhost:8080/api/v1/health` | returns {"status":"ok","db":"ok","redis":"ok"} (attempt) | hangs at DB dial: Floci creates task on `NetworkMode=bridge` with published `hostPort: 8080`, then attaches `web-gobbler_default` network after container start; app starts on bridge-only, RDS proxy at `172.18.0.2:7001` unreachable, `pool.Ping` with `context.Background()` has no timeout → hangs; worker (single-homed, no hostPort) and dual-homed pgx probe both work; root cause is network attach ordering, not dual-homing per se; recorded in compute-layer downgrades 98-101 |
+| 103 | `GET http://localhost:8080/api/v1/health` | returns {"status":"ok","db":"ok","redis":"ok"} (attempt) | hangs at DB dial: Floci creates task on `NetworkMode=bridge` with published `hostPort: 8080`, then attaches `web-gobbler_default` network after container start; app starts on bridge-only, RDS proxy at `172.18.0.2:7001` unreachable, `pool.Ping` with `context.Background()` has no timeout → hangs; worker (single-homed, no hostPort) and dual-homed pgx probe both work; root cause is network attach ordering, not dual-homing per se; mitigated by `ConnectTimeout` + 60s Ping retry in `store.New` (compute layer, issue #3) |
 | state backend | S3 | S3 **re-pointed at Floci** via `backend.floci.hcl` (`endpoint=http://localhost:4566`, `access_key/secret_key=test`, `skip_*` validation, `force_path_style`); `-backend-config` cannot change backend type, so bucket `goscrape-terraform-state` must pre-exist (state persists in `floci_data` volume) |
 | provider configuration | as-is | `deploy_mode=floci`: region `us-east-1`, static `test`/`test` creds, `skip_credentials_validation`/`skip_region_validation`/`skip_requesting_account_id`, `dynamic endpoints` for ec2/ecs/ecr/elasticache/rds/iam/logs/sts/secretsmanager/sns/cloudwatch/elbv2/autoscaling (missing endpoints silently hit real AWS with dummy creds) |
 
@@ -116,7 +116,7 @@ Floci read-back quirks (data plane idempotency): SG `ingress`/`egress`, `tags`/`
 
 ## Testing Decisions
 
-There are **no Go code changes** in this PRD, so the existing `test/` unit tests are unaffected. Testing is **infrastructure acceptance**, exercised end-to-end through the bootstrap script and Terraform:
+There are **no intentional product-feature Go changes** in this PRD. One compute-layer mitigation lives in `store.New` (ConnectTimeout + Ping retry for Floci's hostPort network-attach race; see downgrade row 103). Existing `test/` unit tests are otherwise unaffected. Testing is **infrastructure acceptance**, exercised end-to-end through the bootstrap script and Terraform:
 
 - A good test here verifies **external behavior only**: that a clean machine reaches a running, migrated, health-checked sandbox — not the internal wiring of the script or Terraform internals.
 - **Script e2e** — `scripts/floci-up.ps1` runs green on a clean machine (Docker Desktop, no AWS creds). Includes the optional `-SmokeTest` path (POST a scrape job → poll to `completed`; `GET /api/v1/jobs/:id` returns results).

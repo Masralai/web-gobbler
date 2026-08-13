@@ -358,107 +358,131 @@ resource "aws_ecs_cluster" "main" {
 # Task Definitions
 # ──────────────────────────────────────────────
 
+# ponytail: inline URLs for floci (SecretsManager injection unreliable); same format as secret versions.
+# floci drops logConfiguration/readonlyRootFilesystem on read-back — omit them (Docker default = json-file).
+locals {
+  floci_db_url = format(
+    "postgresql://%s:%s@%s:%d/%s",
+    var.db_master_username,
+    var.db_master_password,
+    aws_db_instance.postgres.address,
+    aws_db_instance.postgres.port,
+    var.db_name
+  )
+  floci_redis_url = format(
+    "redis://:%s@%s:%d",
+    var.redis_auth_token,
+    "floci-valkey-${aws_elasticache_replication_group.redis.replication_group_id}",
+    aws_elasticache_replication_group.redis.port
+  )
+
+  api_container_definitions = var.deploy_mode == "aws" ? jsonencode([{
+    name                   = "api"
+    image                  = "${aws_ecr_repository.api.repository_url}:${var.api_image_tag}"
+    essential              = true
+    readonlyRootFilesystem = true
+    portMappings           = [{ containerPort = 8080, hostPort = 8080, protocol = "tcp" }]
+    secrets = [
+      { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.db_url.arn },
+      { name = "REDIS_URL", valueFrom = aws_secretsmanager_secret.redis_url.arn }
+    ]
+    environment = [
+      { name = "PORT", value = "8080" },
+      { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
+      { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
+      { name = "LOG_LEVEL", value = var.log_level }
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.api.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "ecs"
+      }
+    }
+  }]) : jsonencode([{
+    name         = "api"
+    image        = "${aws_ecr_repository.api.repository_url}:${var.api_image_tag}"
+    essential    = true
+    portMappings = [{ containerPort = 8080, hostPort = 8080, protocol = "tcp" }]
+    environment = [
+      { name = "PORT", value = "8080" },
+      { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
+      { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
+      { name = "LOG_LEVEL", value = var.log_level },
+      { name = "DATABASE_URL", value = local.floci_db_url },
+      { name = "REDIS_URL", value = local.floci_redis_url }
+    ]
+  }])
+
+  worker_container_definitions = var.deploy_mode == "aws" ? jsonencode([{
+    name                   = "worker"
+    image                  = "${aws_ecr_repository.worker.repository_url}:${var.worker_image_tag}"
+    essential              = true
+    readonlyRootFilesystem = true
+    secrets = [
+      { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.db_url.arn },
+      { name = "REDIS_URL", valueFrom = aws_secretsmanager_secret.redis_url.arn }
+    ]
+    environment = [
+      { name = "WORKER_CONCURRENCY", value = tostring(var.worker_concurrency) },
+      { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
+      { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
+      { name = "LOG_LEVEL", value = var.log_level }
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.worker.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "ecs"
+      }
+    }
+  }]) : jsonencode([{
+    name      = "worker"
+    image     = "${aws_ecr_repository.worker.repository_url}:${var.worker_image_tag}"
+    essential = true
+    environment = [
+      { name = "WORKER_CONCURRENCY", value = tostring(var.worker_concurrency) },
+      { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
+      { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
+      { name = "LOG_LEVEL", value = var.log_level },
+      { name = "DATABASE_URL", value = local.floci_db_url },
+      { name = "REDIS_URL", value = local.floci_redis_url }
+    ]
+  }])
+}
+
 resource "aws_ecs_task_definition" "api" {
   family                   = "goscrape-api"
-  network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  network_mode             = var.deploy_mode == "aws" ? "awsvpc" : "bridge"
+  requires_compatibilities = var.deploy_mode == "aws" ? ["FARGATE"] : []
   cpu                      = var.api_cpu
   memory                   = var.api_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
-  container_definitions = jsonencode([
-    {
-      name                   = "api"
-      image                  = "${aws_ecr_repository.api.repository_url}:${var.api_image_tag}"
-      essential              = true
-      readonlyRootFilesystem = true
+  container_definitions = local.api_container_definitions
 
-      portMappings = [
-        {
-          containerPort = 8080
-          hostPort      = 8080
-          protocol      = "tcp"
-        }
-      ]
-
-      secrets = [
-        {
-          name      = "DATABASE_URL"
-          valueFrom = aws_secretsmanager_secret.db_url.arn
-        },
-        {
-          name      = "REDIS_URL"
-          valueFrom = aws_secretsmanager_secret.redis_url.arn
-        }
-      ]
-
-      environment = [
-        { name = "PORT", value = "8080" },
-        { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
-        { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
-        { name = "LOG_LEVEL", value = var.log_level }
-      ]
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.api.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "ecs"
-        }
-      }
-
-      # ponytail: distroless has no wget/shell; ALB target group health_check covers API
-    }
-  ])
+  lifecycle {
+    ignore_changes = [requires_compatibilities, tags, tags_all]
+  }
 }
 
 resource "aws_ecs_task_definition" "worker" {
   family                   = "goscrape-worker"
-  network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  network_mode             = var.deploy_mode == "aws" ? "awsvpc" : "bridge"
+  requires_compatibilities = var.deploy_mode == "aws" ? ["FARGATE"] : []
   cpu                      = var.worker_cpu
   memory                   = var.worker_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
-  container_definitions = jsonencode([
-    {
-      name                   = "worker"
-      image                  = "${aws_ecr_repository.worker.repository_url}:${var.worker_image_tag}"
-      essential              = true
-      readonlyRootFilesystem = true
+  container_definitions = local.worker_container_definitions
 
-      secrets = [
-        {
-          name      = "DATABASE_URL"
-          valueFrom = aws_secretsmanager_secret.db_url.arn
-        },
-        {
-          name      = "REDIS_URL"
-          valueFrom = aws_secretsmanager_secret.redis_url.arn
-        }
-      ]
-
-      environment = [
-        { name = "WORKER_CONCURRENCY", value = tostring(var.worker_concurrency) },
-        { name = "DEFAULT_TIMEOUT_SEC", value = tostring(var.default_timeout_sec) },
-        { name = "DEFAULT_MAX_RETRIES", value = tostring(var.default_max_retries) },
-        { name = "LOG_LEVEL", value = var.log_level }
-      ]
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.worker.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "ecs"
-        }
-      }
-      # ponytail: worker is not an HTTP server; ECS service stability is enough
-    }
-  ])
+  lifecycle {
+    ignore_changes = [requires_compatibilities, tags, tags_all]
+  }
 }
 
 # ──────────────────────────────────────────────
@@ -470,12 +494,16 @@ resource "aws_ecs_service" "api" {
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.api.arn
   desired_count   = var.api_min_capacity
-  launch_type     = "FARGATE"
+  launch_type     = var.deploy_mode == "aws" ? "FARGATE" : null
 
-  network_configuration {
-    subnets          = aws_subnet.private[*].id
-    security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = false
+  # ponytail: bridge mode has no awsvpc network_configuration
+  dynamic "network_configuration" {
+    for_each = var.deploy_mode == "aws" ? [1] : []
+    content {
+      subnets          = aws_subnet.private[*].id
+      security_groups  = [aws_security_group.ecs_tasks.id]
+      assign_public_ip = false
+    }
   }
 
   dynamic "load_balancer" {
@@ -490,11 +518,14 @@ resource "aws_ecs_service" "api" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
-  health_check_grace_period_seconds = 30
+  # ponytail: floci read-back resets grace to 0; only set under aws
+  health_check_grace_period_seconds = var.deploy_mode == "aws" ? 30 : null
 
-  depends_on = [
-    aws_lb_listener.api[0]
-  ]
+  depends_on = [aws_lb_listener.api]
+
+  lifecycle {
+    ignore_changes = [tags, tags_all, scheduling_strategy, availability_zone_rebalancing, health_check_grace_period_seconds]
+  }
 }
 
 resource "aws_ecs_service" "worker" {
@@ -502,16 +533,23 @@ resource "aws_ecs_service" "worker" {
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.worker.arn
   desired_count   = var.worker_min_capacity
-  launch_type     = "FARGATE"
+  launch_type     = var.deploy_mode == "aws" ? "FARGATE" : null
 
-  network_configuration {
-    subnets          = aws_subnet.private[*].id
-    security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = false
+  dynamic "network_configuration" {
+    for_each = var.deploy_mode == "aws" ? [1] : []
+    content {
+      subnets          = aws_subnet.private[*].id
+      security_groups  = [aws_security_group.ecs_tasks.id]
+      assign_public_ip = false
+    }
   }
 
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
+
+  lifecycle {
+    ignore_changes = [tags, tags_all, scheduling_strategy, availability_zone_rebalancing]
+  }
 }
 
 # ──────────────────────────────────────────────

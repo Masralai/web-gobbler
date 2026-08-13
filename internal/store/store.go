@@ -72,24 +72,44 @@ type Store struct {
 
 // New connects to PostgreSQL, verifies the connection with a ping, and returns a Store.
 // The pool is configured with a maximum of 10 concurrent connections.
+//
+// ponytail: ConnectTimeout + retry covers Floci hostPort race (bridge-only until
+// web-gobbler_default attaches); raise deadline only if attach stays >60s.
 func New(ctx context.Context, databaseURL string) (*Store, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	config.MaxConns = 10
+	config.ConnConfig.ConnectTimeout = 5 * time.Second
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("create pool: %w", err)
 	}
 
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("ping: %w", err)
+	deadline := time.Now().Add(60 * time.Second)
+	var pingErr error
+	for {
+		pingErr = pool.Ping(ctx)
+		if pingErr == nil {
+			return &Store{pool: pool}, nil
+		}
+		if ctx.Err() != nil {
+			pool.Close()
+			return nil, fmt.Errorf("ping: %w", ctx.Err())
+		}
+		if time.Now().After(deadline) {
+			pool.Close()
+			return nil, fmt.Errorf("ping: %w", pingErr)
+		}
+		select {
+		case <-ctx.Done():
+			pool.Close()
+			return nil, fmt.Errorf("ping: %w", ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-
-	return &Store{pool: pool}, nil
 }
 
 // Ping verifies the database connection is still alive.
