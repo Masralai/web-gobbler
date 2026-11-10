@@ -40,3 +40,7 @@ rtk pip list            rtk pnpm install        rtk npm run <script>
 - For debugging, use raw command without rtk prefix
 - `rtk proxy <cmd>` runs command without filtering but tracks usage
 <!-- /headroom:rtk-instructions -->
+
+## Project skill
+
+For API integration work, read `skills/web-gobbler/SKILL.md`.

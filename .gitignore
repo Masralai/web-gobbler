@@ -20,6 +20,9 @@ terraform.rc
 terraform/backend.floci.hcl
 terraform/*.tfplan
 
+# ── Private planning ──
+spec/
+.commandcode/
 
 # ── Floci sandbox ──
 .floci-data/
@@ -32,3 +35,4 @@ terraform/*.tfplan
 *~
 .DS_Store
 Thumbs.db
+skills/
