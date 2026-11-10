@@ -1,0 +1,21 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - caddy
+
+write_files:
+  - path: /opt/web-gobbler/Caddyfile
+    permissions: "0644"
+    content: |
+      ${domain} {
+        reverse_proxy 127.0.0.1:8080
+      }
+
+runcmd:
+  - systemctl enable --now docker
+  - systemctl enable --now caddy
+  - mkdir -p /opt/web-gobbler
+  - cp /opt/web-gobbler/Caddyfile /etc/caddy/Caddyfile
+  - systemctl reload caddy

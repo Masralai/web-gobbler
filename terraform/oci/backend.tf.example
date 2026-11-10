@@ -1,0 +1,13 @@
+# Copy to backend.tf and fill in the OCI Object Storage S3-compatible endpoint.
+# terraform init -backend-config=backend.tf
+terraform {
+  backend "s3" {
+    bucket                      = "web-gobbler-tfstate"
+    key                         = "oracle/terraform.tfstate"
+    region                      = "us-east-1"
+    endpoint                    = "https://<namespace>.compat.objectstorage.<region>.oraclecloud.com"
+    skip_region_validation      = true
+    skip_credentials_validation = true
+    skip_requesting_account_id  = true
+  }
+}
