@@ -19,14 +19,24 @@ type Fetcher interface {
 	Fetch(ctx context.Context, rawURL string, opts *ScrapeOptions) (body []byte, status int, err error)
 }
 
+type httpMeta struct {
+	finalURL    string
+	contentType string
+}
+
 // HTTPFetcher is the default plain HTTP fetcher.
 type HTTPFetcher struct{}
 
 func (HTTPFetcher) Fetch(ctx context.Context, rawURL string, opts *ScrapeOptions) ([]byte, int, error) {
+	body, status, _, err := fetchHTTP(ctx, rawURL, opts)
+	return body, status, err
+}
+
+func fetchHTTP(ctx context.Context, rawURL string, opts *ScrapeOptions) ([]byte, int, httpMeta, error) {
 	client := newScrapeClient(opts)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
+		return nil, 0, httpMeta{}, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("User-Agent", opts.UserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
@@ -35,14 +45,18 @@ func (HTTPFetcher) Fetch(ctx context.Context, rawURL string, opts *ScrapeOptions
 	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, 0, fmt.Errorf("%w: %w", ErrTimeout, err)
+			return nil, 0, httpMeta{}, fmt.Errorf("%w: %w", ErrTimeout, err)
 		}
-		return nil, 0, fmt.Errorf("request failed: %w", err)
+		return nil, 0, httpMeta{}, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	meta := httpMeta{finalURL: rawURL, contentType: resp.Header.Get("Content-Type")}
+	if resp.Request != nil && resp.Request.URL != nil {
+		meta.finalURL = resp.Request.URL.String()
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
+		return nil, resp.StatusCode, meta, fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
 	}
 
 	var bodyReader io.Reader = resp.Body
@@ -51,9 +65,9 @@ func (HTTPFetcher) Fetch(ctx context.Context, rawURL string, opts *ScrapeOptions
 	}
 	body, err := io.ReadAll(bodyReader)
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("%w: %w", ErrParseFailure, err)
+		return nil, resp.StatusCode, meta, fmt.Errorf("%w: %w", ErrParseFailure, err)
 	}
-	return body, resp.StatusCode, nil
+	return body, resp.StatusCode, meta, nil
 }
 
 // ErrBrowserUnavailable is returned when render_js is requested but Chrome is not available.

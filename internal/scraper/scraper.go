@@ -30,8 +30,10 @@ var privateCIDRs []*net.IPNet
 
 func init() {
 	for _, cidr := range []string{
-		"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
-		"192.168.0.0/16", "169.254.0.0/16", "::1/128",
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+		"169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
+		"::1/128", "fc00::/7", "fe80::/10",
+		"::ffff:0:0/96",
 	} {
 		_, block, err := net.ParseCIDR(cidr)
 		if err == nil {
@@ -41,9 +43,22 @@ func init() {
 }
 
 func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsUnspecified() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return true
+	}
 	for _, block := range privateCIDRs {
 		if block.Contains(ip) {
 			return true
+		}
+	}
+	if v4 := ip.To4(); v4 != nil {
+		for _, block := range privateCIDRs {
+			if block.Contains(v4) {
+				return true
+			}
 		}
 	}
 	return false
@@ -81,19 +96,21 @@ type PageResult struct {
 
 // Result holds scrape/crawl/map output.
 type Result struct {
-	Links         []string     `json:"links,omitempty"`
-	Headers       []string     `json:"headers,omitempty"`
-	Paragraphs    []string     `json:"paragraphs,omitempty"`
-	Markdown      string       `json:"markdown,omitempty"`
-	HTML          string       `json:"html,omitempty"`
-	RawHTML       string       `json:"raw_html,omitempty"`
-	Truncated     bool         `json:"truncated,omitempty"`
-	Pages         []PageResult `json:"pages,omitempty"`
-	PagesCrawled  int          `json:"pages_crawled,omitempty"`
-	PagesSkipped  int          `json:"pages_skipped,omitempty"`
-	URLs          []string     `json:"urls,omitempty"`
-	HTTPStatus    int          `json:"http_status"`
-	DurationMs    int64        `json:"duration_ms"`
+	Links        []string     `json:"links,omitempty"`
+	Headers      []string     `json:"headers,omitempty"`
+	Paragraphs   []string     `json:"paragraphs,omitempty"`
+	Markdown     string       `json:"markdown,omitempty"`
+	HTML         string       `json:"html,omitempty"`
+	RawHTML      string       `json:"raw_html,omitempty"`
+	Truncated    bool         `json:"truncated,omitempty"`
+	Pages        []PageResult `json:"pages,omitempty"`
+	PagesCrawled int          `json:"pages_crawled,omitempty"`
+	PagesSkipped int          `json:"pages_skipped,omitempty"`
+	URLs         []string     `json:"urls,omitempty"`
+	HTTPStatus   int          `json:"http_status"`
+	ContentType  string       `json:"content_type,omitempty"`
+	FinalURL     string       `json:"final_url,omitempty"`
+	DurationMs   int64        `json:"duration_ms"`
 }
 
 // DefaultOptions returns sensible scrape defaults.
@@ -118,20 +135,29 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 	}
 
 	start := time.Now()
-	fetcher := DefaultHTTPFetcher
+	var body []byte
+	var httpStatus int
+	var meta httpMeta
 	if opts.RenderJS {
-		fetcher = DefaultBrowserFetcher
-	}
-	body, httpStatus, err := fetcher.Fetch(ctx, rawURL, opts)
-	if err != nil {
-		return &Result{HTTPStatus: httpStatus, DurationMs: time.Since(start).Milliseconds()}, err
+		var err error
+		body, httpStatus, err = DefaultBrowserFetcher.Fetch(ctx, rawURL, opts)
+		if err != nil {
+			return &Result{HTTPStatus: httpStatus, DurationMs: time.Since(start).Milliseconds()}, err
+		}
+		meta = httpMeta{finalURL: rawURL}
+	} else {
+		var err error
+		body, httpStatus, meta, err = fetchHTTP(ctx, rawURL, opts)
+		if err != nil {
+			return &Result{HTTPStatus: httpStatus, ContentType: meta.contentType, FinalURL: meta.finalURL, DurationMs: time.Since(start).Milliseconds()}, err
+		}
 	}
 	doc, err := parseHTML(body)
 	if err != nil {
-		return &Result{HTTPStatus: httpStatus, DurationMs: time.Since(start).Milliseconds()}, err
+		return &Result{HTTPStatus: httpStatus, ContentType: meta.contentType, FinalURL: meta.finalURL, DurationMs: time.Since(start).Milliseconds()}, err
 	}
 
-	result := &Result{HTTPStatus: httpStatus}
+	result := &Result{HTTPStatus: httpStatus, ContentType: meta.contentType, FinalURL: meta.finalURL}
 	extractSet := buildExtractSet(extractTypes)
 
 	if extractSet["links"] || extractSet["all"] {
