@@ -9,7 +9,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const maxRequestBodySize = 1 << 20
+const maxRequestBodySize = 10 << 20
 
 // SecurityHeadersMiddleware sets recommended security-related HTTP headers on every response:
 // X-Content-Type-Options (nosniff), X-Frame-Options (DENY),
@@ -26,11 +26,12 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 	}
 }
 
-// BodySizeLimitMiddleware caps the request body size to 1 MB using http.MaxBytesReader.
-// Requests exceeding this limit will fail with a 413 Payload Too Large error.
+// BodySizeLimitMiddleware caps JSON request bodies to 10 MiB. /v2/parse enforces its own 50 MB multipart limit.
 func BodySizeLimitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodySize)
+		if c.Request.URL.Path != "/v2/parse" {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodySize)
+		}
 		c.Next()
 	}
 }

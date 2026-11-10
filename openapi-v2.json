@@ -1,0 +1,60 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Web Gobbler v2",
+    "version": "2.0.0",
+    "description": "Self-host scraper API."
+  },
+  "servers": [{"url": "/"}],
+  "paths": {
+    "/v2/scrape": {
+      "post": {
+        "summary": "Scrape one URL",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"}, "formats": {"type": "array", "items": {"type": "string"}}, "onlyMainContent": {"type": "boolean"}, "timeout": {"type": "integer"}, "waitFor": {"type": "integer"}}}}}},
+        "responses": {"200": {"description": "Document"}}
+      }
+    },
+    "/v2/scrape/{jobId}": {
+      "get": {
+        "parameters": [{"name": "jobId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Document or scraping status"}}
+      }
+    },
+    "/v2/crawl": {
+      "post": {
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"}, "limit": {"type": "integer"}, "maxDiscoveryDepth": {"type": "integer"}, "scrapeOptions": {"type": "object"}}}}}},
+        "responses": {"200": {"description": "Accepted"}}
+      }
+    },
+    "/v2/crawl/{jobId}": {
+      "get": {
+        "parameters": [{"name": "jobId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Crawl status"}}
+      },
+      "delete": {
+        "parameters": [{"name": "jobId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Cancelled"}}
+      }
+    },
+    "/v2/crawl/{jobId}/errors": {
+      "get": {
+        "parameters": [{"name": "jobId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Crawl errors"}}
+      }
+    },
+    "/v2/crawl/ongoing": {"get": {"responses": {"200": {"description": "Ongoing crawls"}}}},
+    "/v2/crawl/active": {"get": {"responses": {"200": {"description": "Active crawls"}}}},
+    "/v2/map": {"post": {"responses": {"200": {"description": "URLs"}}}},
+    "/v2/batch/scrape": {"post": {"responses": {"200": {"description": "Accepted"}}}},
+    "/v2/batch/scrape/{jobId}": {"get": {"parameters": [{"name": "jobId", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Batch status"}}}},
+    "/v2/batch/scrape/{jobId}/errors": {"get": {"parameters": [{"name": "jobId", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Batch errors"}}}},
+    "/v2/search": {"post": {"responses": {"200": {"description": "Search results"}}}},
+    "/v2/extract": {"post": {"responses": {"200": {"description": "Accepted"}}}},
+    "/v2/extract/{jobId}": {"get": {"parameters": [{"name": "jobId", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Extract status"}}}},
+    "/v2/parse/formats": {"get": {"responses": {"200": {"description": "Supported parse formats"}}}},
+    "/v2/parse": {"post": {"responses": {"200": {"description": "Parsed document"}}}},
+    "/v2/concurrency-check": {"get": {"responses": {"200": {"description": "Concurrency"}}}},
+    "/health": {"get": {"responses": {"200": {"description": "Liveness"}}}},
+    "/ready": {"get": {"responses": {"200": {"description": "Readiness"}}}}
+  }
+}

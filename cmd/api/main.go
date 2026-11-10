@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Masralai/web-gobbler/internal/api"
+	apiv2 "github.com/Masralai/web-gobbler/internal/api/v2"
 	"github.com/Masralai/web-gobbler/internal/extract"
 	"github.com/Masralai/web-gobbler/internal/queue"
 	"github.com/Masralai/web-gobbler/internal/store"
@@ -86,8 +87,28 @@ func main() {
 	}
 	// ponytail: root /health for ALB/ECS/CI; /api/v1/health kept for API clients
 	r.GET("/health", handler.HandleHealth)
-	v1 := r.Group("/api/v1")
-	handler.RegisterRoutes(v1)
+	r.GET("/ready", handler.HandleHealth)
+
+	v2cfg := apiv2.Config{
+		APIKey:            os.Getenv("API_KEY"),
+		WebhookSecret:     firstEnv("WEBHOOK_SECRET", "SELF_HOSTED_WEBHOOK_HMAC_SECRET"),
+		SearXNGEndpoint:   os.Getenv("SEARXNG_ENDPOINT"),
+		PublicBaseURL:     os.Getenv("PUBLIC_BASE_URL"),
+		DemoMode:          os.Getenv("DEMO_MODE") == "true",
+		MaxCrawlPages:     getEnvInt("DEMO_MAX_CRAWL_PAGES", 25),
+		MaxConcurrentJobs: getEnvInt("MAX_CONCURRENT_JOBS", 5),
+		RetentionMinutes:  getEnvInt("DEMO_RETENTION_MINUTES", 60),
+	}
+	v2h := apiv2.NewHandler(db, q, v2cfg)
+	if llmCfg.Enabled() {
+		v2h.Extractor = extract.NewClient(llmCfg, nil)
+		v2h.LLMEnabled = true
+	}
+	v2h.Register(r)
+	if os.Getenv("V1_ENABLED") == "true" {
+		v1 := r.Group("/api/v1")
+		handler.RegisterRoutes(v1)
+	}
 
 	srv := &http.Server{
 		Addr:              ":" + port,
@@ -137,6 +158,15 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func getEnvFloat(key string, fallback float64) float64 {

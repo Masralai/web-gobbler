@@ -17,10 +17,12 @@ import (
 	"time"
 
 	"github.com/Masralai/web-gobbler/internal/crawl"
+	"github.com/Masralai/web-gobbler/internal/extract"
 	"github.com/Masralai/web-gobbler/internal/metrics"
 	"github.com/Masralai/web-gobbler/internal/queue"
 	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/Masralai/web-gobbler/internal/store"
+	v2worker "github.com/Masralai/web-gobbler/internal/worker"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
@@ -301,6 +303,15 @@ func getEnvInt(key string, fallback int) int {
 	return fallback
 }
 
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func setupLogger(level string) {
 	var l slog.Level
 	switch level {
@@ -424,6 +435,22 @@ func main() {
 
 	pool.Run(ctx, concurrency)
 	slog.Info("all workers running", "count", concurrency)
+
+	v2w := &v2worker.V2Worker{
+		Store: db, Queue: q,
+		WebhookSecret:    firstEnv("WEBHOOK_SECRET", "SELF_HOSTED_WEBHOOK_HMAC_SECRET"),
+		RetentionMinutes: getEnvInt("JOB_RETENTION_MINUTES", 1440),
+	}
+	if llmCfg := extract.FromEnv(); llmCfg.Enabled() {
+		v2w.Extractor = extract.NewClient(llmCfg, nil)
+		v2w.LLM = true
+	}
+	capability := getEnv("WORKER_CAPABILITY", "default")
+	if os.Getenv("RENDER_JS_ENABLED") == "1" {
+		capability = "browser"
+	}
+	v2w.Run(ctx, capability, concurrency)
+	slog.Info("v2 worker running", "capability", capability, "count", concurrency)
 
 	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
