@@ -63,13 +63,7 @@ func (h *Handler) WithExtractor(ex extract.Extractor, enabled bool) *Handler {
 
 // RegisterRoutes attaches all handler methods to the given router group.
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
-	r.POST("/scrape", h.HandleScrape)
-	r.POST("/crawl", h.HandleCrawl)
-	r.POST("/map", h.HandleMap)
-	r.GET("/jobs/:id", h.HandleGetJob)
-	r.GET("/jobs", h.HandleListJobs)
-	r.DELETE("/jobs/:id", h.HandleDeleteJob)
-	r.POST("/jobs/:id/extract", h.HandleExtract)
+	// REQ-002i/008c: v1 scraping routes removed; /api/v1/health remains (REQ-008d).
 	r.GET("/health", h.HandleHealth)
 }
 

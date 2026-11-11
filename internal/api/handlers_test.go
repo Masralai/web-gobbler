@@ -95,6 +95,14 @@ func setupTestRouter(h *Handler) *gin.Engine {
 	r := gin.New()
 	v1 := r.Group("/api/v1")
 	h.RegisterRoutes(v1)
+	// ponytail: v1 scraping routes removed from prod (REQ-002i/008c); keep for legacy handler tests
+	v1.POST("/scrape", h.HandleScrape)
+	v1.POST("/crawl", h.HandleCrawl)
+	v1.POST("/map", h.HandleMap)
+	v1.GET("/jobs/:id", h.HandleGetJob)
+	v1.GET("/jobs", h.HandleListJobs)
+	v1.DELETE("/jobs/:id", h.HandleDeleteJob)
+	v1.POST("/jobs/:id/extract", h.HandleExtract)
 	return r
 }
 
