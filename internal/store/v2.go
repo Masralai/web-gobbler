@@ -173,6 +173,13 @@ func (s *Store) SetV2Processing(ctx context.Context, id uuid.UUID) (bool, error)
 	return tag.RowsAffected() > 0, nil
 }
 
+func (s *Store) ClearV2LeaseKeepProcessing(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE jobs SET lease_expires_at = NULL, updated_at = now()
+		 WHERE id = $1 AND status = 'processing'`, id)
+	return err
+}
+
 func (s *Store) UpdateV2Job(ctx context.Context, id uuid.UUID, status string, result json.RawMessage, errorMsg *string, httpStatus *int, retries int, durationMs *int64) error {
 	var completedAt *time.Time
 	if status == "completed" || status == "failed" || status == StatusCancelled {

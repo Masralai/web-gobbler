@@ -72,6 +72,10 @@ type ScrapeOptions struct {
 	MaxBodySize     int64
 	UserAgent       string
 	RenderJS        bool
+	Headers         map[string]string
+	OnlyMainContent *bool
+	IncludeTags     []string
+	ExcludeTags     []string
 }
 
 // DefaultHTTPFetcher is used when RenderJS is false.
@@ -170,9 +174,7 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 		result.Paragraphs = extractParagraphs(doc)
 	}
 	if extractSet["markdown"] || extractSet["html"] || extractSet["all"] {
-		main := mainContent(doc)
-		clone := main.Clone()
-		stripNoise(clone)
+		clone := filteredContent(doc, opts)
 		if extractSet["markdown"] || extractSet["all"] {
 			result.Markdown = htmlToMarkdown(clone)
 		}
@@ -206,17 +208,24 @@ func resolveAndCheckURL(ctx context.Context, rawURL string) (*url.URL, error) {
 	}
 	hostname := parsedURL.Hostname()
 	if os.Getenv("SCRAPER_ALLOW_PRIVATE_IPS") == "" {
-		ips, err := net.LookupIP(hostname)
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
 		if err != nil {
 			return nil, fmt.Errorf("dns lookup failed: %w", err)
 		}
-		for _, ip := range ips {
-			if isPrivateIP(ip) {
-				return nil, fmt.Errorf("%w: %s resolves to %s", ErrPrivateIP, hostname, ip)
+		for _, a := range ips {
+			if isPrivateIP(a.IP) {
+				return nil, fmt.Errorf("%w: %s resolves to %s", ErrPrivateIP, hostname, a.IP)
 			}
 		}
 	}
 	return parsedURL, nil
+}
+
+// ValidatePublicURL checks that a URL is fetchable and does not resolve to a private address.
+// ponytail: used at accept time for v2 crawl/batch/search/webhook targets.
+func ValidatePublicURL(ctx context.Context, rawURL string) error {
+	_, err := resolveAndCheckURL(ctx, rawURL)
+	return err
 }
 
 func newScrapeClient(opts *ScrapeOptions) *http.Client {

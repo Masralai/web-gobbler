@@ -14,11 +14,58 @@ func mainContent(doc *goquery.Document) *goquery.Selection {
 			return n
 		}
 	}
-	return doc.Find("body").First()
+	if body := doc.Find("body").First(); body.Length() > 0 {
+		return body
+	}
+	return doc.Selection
 }
 
 func stripNoise(sel *goquery.Selection) {
 	sel.Find("script,style,nav,footer,noscript").Remove()
+}
+
+func filteredContent(doc *goquery.Document, opts *ScrapeOptions) *goquery.Selection {
+	onlyMain := true
+	if opts != nil && opts.OnlyMainContent != nil {
+		onlyMain = *opts.OnlyMainContent
+	}
+	var base *goquery.Selection
+	if onlyMain {
+		base = mainContent(doc)
+	} else {
+		if body := doc.Find("body").First(); body.Length() > 0 {
+			base = body
+		} else {
+			base = doc.Selection
+		}
+	}
+	// ponytail: basic include/exclude tag filtering for markdown/html output.
+	if opts != nil && len(opts.IncludeTags) > 0 {
+		sel := strings.Join(opts.IncludeTags, ",")
+		matched := base.Find(sel)
+		if matched.Length() > 0 {
+			frag := base.Clone()
+			frag.Empty()
+			matched.Each(func(_ int, s *goquery.Selection) {
+				if html, err := goquery.OuterHtml(s); err == nil {
+					frag.AppendHtml(html)
+				}
+			})
+			base = frag
+		}
+	}
+	clone := base.Clone()
+	if opts != nil {
+		for _, tag := range opts.ExcludeTags {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			clone.Find(tag).Remove()
+		}
+	}
+	stripNoise(clone)
+	return clone
 }
 
 // htmlToMarkdown converts a selection's content to simple markdown (no external deps).

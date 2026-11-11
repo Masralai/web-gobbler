@@ -7,8 +7,5 @@ func MarkdownFromHTML(body []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	main := mainContent(doc)
-	clone := main.Clone()
-	stripNoise(clone)
-	return htmlToMarkdown(clone), nil
+	return htmlToMarkdown(filteredContent(doc, nil)), nil
 }

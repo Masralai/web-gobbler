@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +115,9 @@ func (w *V2Worker) process(ctx context.Context, msg queue.StreamMessage) error {
 	if err != nil {
 		msgText := err.Error()
 		_ = w.Store.UpdateV2Job(ctx, id, "failed", nil, &msgText, nil, 0, int64Ptr(time.Since(start).Milliseconds()))
+		if job.Kind == store.KindExtract {
+			w.deliver(ctx, job, "extract.failed", map[string]any{"success": false, "error": msgText})
+		}
 		return err
 	}
 	return nil
@@ -133,6 +138,14 @@ func (w *V2Worker) processScrapeJob(ctx context.Context, job *store.V2Job) error
 }
 
 func (w *V2Worker) processPage(ctx context.Context, job *store.V2Job) error {
+	if job.ParentID != nil {
+		if p, err := w.Store.GetV2Job(ctx, *job.ParentID); err == nil && p.Kind == store.KindBatch && p.Status == "queued" {
+			if claimed, _ := w.Store.SetV2Processing(ctx, p.ID); claimed {
+				w.deliver(ctx, p, "batch_scrape.started", map[string]any{"success": true})
+				_ = w.Store.ClearV2LeaseKeepProcessing(ctx, p.ID)
+			}
+		}
+	}
 	var req apiv2.BatchRequest
 	if len(job.Request) > 0 {
 		_ = json.Unmarshal(job.Request, &req)
@@ -151,12 +164,17 @@ func (w *V2Worker) processPage(ctx context.Context, job *store.V2Job) error {
 		return err
 	}
 	if job.ParentID != nil {
+		if p, err := w.Store.GetV2Job(ctx, *job.ParentID); err == nil && p.Kind == store.KindBatch {
+			w.deliver(ctx, p, "batch_scrape.page", map[string]any{"success": true, "data": []apiv2.Document{doc}, "scrapeId": job.ID.String()})
+		}
 		return w.maybeCompleteBatch(ctx, *job.ParentID)
 	}
 	return nil
 }
 
 func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
+	w.deliver(ctx, job, "crawl.started", map[string]any{"success": true})
+	start := time.Now()
 	var req apiv2.CrawlRequest
 	if err := json.Unmarshal(job.Request, &req); err != nil {
 		return err
@@ -165,13 +183,11 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 	if req.Limit != nil {
 		limit = *req.Limit
 	}
-	depth := 0
+	maxDepth := 100000
 	if req.MaxDiscoveryDepth != nil {
-		depth = *req.MaxDiscoveryDepth
+		maxDepth = *req.MaxDiscoveryDepth
 	} else if req.MaxDepth != nil {
-		depth = *req.MaxDepth
-	} else {
-		depth = 100000
+		maxDepth = *req.MaxDepth
 	}
 	opts := scraper.DefaultOptions()
 	opts.Timeout = 30 * time.Second
@@ -181,43 +197,180 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 			opts.Timeout = time.Duration(req.ScrapeOptions.Timeout) * time.Millisecond
 		}
 		extractTypes = extractTypesFor(req.ScrapeOptions.Formats)
+		applyV2ScrapeOptions(opts, req.ScrapeOptions)
 	}
-	cancel := func() bool {
+
+	cancelled := func() bool {
+		if ctx.Err() != nil {
+			return true
+		}
 		cur, err := w.Store.GetV2Job(ctx, job.ID)
 		return err == nil && cur.Status != "processing"
 	}
-	res, err := crawl.CrawlBFS(ctx, req.URL, crawl.Options{
-		MaxPages: limit, MaxDepth: depth, Extract: extractTypes, Scrape: *opts,
-	}, nil, cancel)
+
+	seedNorm, err := crawl.NormalizeURL(req.URL)
 	if err != nil {
 		return err
 	}
-	for _, page := range res.Pages {
-		doc := docFromPage(page, req.ScrapeOptions)
-		raw, _ := json.Marshal(doc)
-		child, err := w.Store.CreateV2Child(ctx, job.ID, page.URL, page.Depth, job.Request)
+	seedURL, err := url.Parse(seedNorm)
+	if err != nil {
+		return err
+	}
+	includeSubdomains := req.AllowSubdomains
+	ignoreQuery := true
+	if req.IgnoreQueryParameters != nil {
+		ignoreQuery = *req.IgnoreQueryParameters
+	}
+	sameScope := func(u *url.URL) bool {
+		if u == nil || seedURL == nil {
+			return false
+		}
+		if strings.EqualFold(u.Hostname(), seedURL.Hostname()) {
+			return true
+		}
+		if req.AllowExternalLinks || req.CrawlEntireDomain && req.AllowExternalLinks {
+			return true
+		}
+		if includeSubdomains || req.CrawlEntireDomain {
+			sh := strings.ToLower(seedURL.Hostname())
+			uh := strings.ToLower(u.Hostname())
+			return strings.HasSuffix(uh, "."+sh)
+		}
+		return false
+	}
+	pathAllowedCrawl := func(raw string) bool {
+		target := raw
+		if u, err := url.Parse(raw); err == nil && !req.RegexOnFullURL {
+			target = u.Path
+		}
+		for _, p := range req.ExcludePaths {
+			if re, err := regexp.Compile(p); err == nil && re.MatchString(target) {
+				return false
+			}
+		}
+		if len(req.IncludePaths) == 0 {
+			return true
+		}
+		for _, p := range req.IncludePaths {
+			if re, err := regexp.Compile(p); err == nil && re.MatchString(target) {
+				return true
+			}
+		}
+		return false
+	}
+	normalize := func(raw string) (string, *url.URL, bool) {
+		norm, err := crawl.NormalizeURL(raw)
 		if err != nil {
-			return err
+			return "", nil, false
+		}
+		u, err := url.Parse(norm)
+		if err != nil {
+			return "", nil, false
+		}
+		if ignoreQuery {
+			u.RawQuery = ""
+			norm = u.String()
+		}
+		return norm, u, true
+	}
+
+	type frontierItem struct {
+		URL   string
+		Depth int
+	}
+	seen := map[string]bool{}
+	queue := []frontierItem{}
+	enqueue := func(raw string, depth int) {
+		if depth < 0 || depth > maxDepth {
+			return
+		}
+		norm, u, ok := normalize(raw)
+		if !ok || seen[norm] {
+			return
+		}
+		if !sameScope(u) || !pathAllowedCrawl(norm) {
+			return
+		}
+		seen[norm] = true
+		queue = append(queue, frontierItem{URL: norm, Depth: depth})
+	}
+	enqueue(seedNorm, 0)
+
+	pagesProcessed := 0
+	docs := make([]apiv2.Document, 0)
+	for len(queue) > 0 && pagesProcessed < limit {
+		if cancelled() {
+			break
+		}
+		item := queue[0]
+		queue = queue[1:]
+
+		page, err := scraper.ScrapePage(ctx, item.URL, extractTypes, opts)
+		pr := scraper.PageResult{URL: item.URL, Depth: item.Depth}
+		if err != nil {
+			if page != nil {
+				pr.HTTPStatus = page.HTTPStatus
+			}
+		} else {
+			pr.Links = page.Links
+			pr.Headers = page.Headers
+			pr.Paragraphs = page.Paragraphs
+			pr.Markdown = page.Markdown
+			pr.HTML = page.HTML
+			pr.RawHTML = page.RawHTML
+			pr.HTTPStatus = page.HTTPStatus
+			pr.Truncated = page.Truncated
+		}
+
+		doc := docFromPage(pr, req.ScrapeOptions)
+		raw, _ := json.Marshal(doc)
+		child, cErr := w.Store.CreateV2Child(ctx, job.ID, item.URL, item.Depth, job.Request)
+		if cErr != nil {
+			return cErr
 		}
 		status := "completed"
 		var errMsg *string
-		if page.HTTPStatus == 0 {
+		if pr.HTTPStatus == 0 {
 			status = "failed"
 			msg := "scrape failed"
+			if err != nil {
+				msg = err.Error()
+			}
 			errMsg = &msg
 		}
-		if err := w.Store.UpdateV2Job(ctx, child, status, raw, errMsg, &page.HTTPStatus, 0, int64Ptr(0)); err != nil {
-			return err
+		if uErr := w.Store.UpdateV2Job(ctx, child, status, raw, errMsg, &pr.HTTPStatus, 0, int64Ptr(0)); uErr != nil {
+			return uErr
+		}
+		pagesProcessed++
+		if status == "completed" {
+			docs = append(docs, doc)
+			w.deliver(ctx, job, "crawl.page", map[string]any{"success": true, "data": []apiv2.Document{doc}, "scrapeId": child.String()})
+			if item.Depth < maxDepth && pagesProcessed < limit {
+				for _, link := range pr.Links {
+					enqueue(link, item.Depth+1)
+					if len(queue)+pagesProcessed >= limit*4 { // soft bound to avoid runaway queue
+						// continue; we'll still process up to limit pages
+					}
+				}
+			}
+		}
+		if req.Delay > 0 {
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Duration(req.Delay) * time.Second):
+			}
 		}
 	}
-	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", mustJSON(res), nil, nil, 0, int64Ptr(res.DurationMs)); err != nil {
+
+	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", mustJSON(map[string]any{"pages_crawled": pagesProcessed}), nil, nil, 0, int64Ptr(time.Since(start).Milliseconds())); err != nil {
 		return err
 	}
-	w.deliver(ctx, job, "crawl.completed", mustJSON(res))
+	w.deliver(ctx, job, "crawl.completed", map[string]any{"success": true, "data": docs})
 	return nil
 }
 
 func (w *V2Worker) processExtract(ctx context.Context, job *store.V2Job) error {
+	w.deliver(ctx, job, "extract.started", map[string]any{"success": true})
 	var req apiv2.ExtractRequest
 	if err := json.Unmarshal(job.Request, &req); err != nil {
 		return err
@@ -275,7 +428,9 @@ func (w *V2Worker) processExtract(ctx context.Context, job *store.V2Job) error {
 	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", payload, nil, nil, 0, int64Ptr(0)); err != nil {
 		return err
 	}
-	w.deliver(ctx, job, "extract.completed", payload)
+	var extractData any
+	_ = json.Unmarshal(payload, &extractData)
+	w.deliver(ctx, job, "extract.completed", extractData)
 	return nil
 }
 
@@ -297,7 +452,20 @@ func (w *V2Worker) maybeCompleteBatch(ctx context.Context, parent uuid.UUID) err
 	if err := w.Store.UpdateV2Job(ctx, parent, "completed", nil, nil, nil, 0, int64Ptr(0)); err != nil {
 		return err
 	}
-	w.deliver(ctx, p, "batch_scrape.completed", mustJSON(map[string]any{"completed": completed, "total": total}))
+	children, _ := w.Store.ListV2Children(ctx, parent, "completed", 100, 0)
+	docs := make([]apiv2.Document, 0, len(children))
+	for _, ch := range children {
+		if len(ch.Result) == 0 {
+			continue
+		}
+		var doc apiv2.Document
+		if json.Unmarshal(ch.Result, &doc) == nil {
+			docs = append(docs, doc)
+		}
+	}
+	w.deliver(ctx, p, "batch_scrape.completed", map[string]any{"success": true, "data": docs})
+	_ = completed
+	_ = total
 	return nil
 }
 
@@ -343,6 +511,12 @@ func (w *V2Worker) scrape(ctx context.Context, req apiv2.ScrapeRequest) (apiv2.D
 	if req.Timeout > 0 {
 		opts.Timeout = time.Duration(req.Timeout) * time.Millisecond
 	}
+	if len(req.Headers) > 0 {
+		opts.Headers = req.Headers
+	}
+	opts.OnlyMainContent = req.OnlyMainContent
+	opts.IncludeTags = req.IncludeTags
+	opts.ExcludeTags = req.ExcludeTags
 	types := extractTypesFor(req.Formats)
 	res, err := scraper.ScrapePage(ctx, req.URL, types, opts)
 	if err != nil {
@@ -356,6 +530,18 @@ func (w *V2Worker) scrape(ctx context.Context, req apiv2.ScrapeRequest) (apiv2.D
 		Markdown: res.Markdown, HTML: res.HTML, RawHTML: res.RawHTML, Links: res.Links,
 		Metadata: apiv2.Metadata{SourceURL: req.URL, URL: finalURL, StatusCode: res.HTTPStatus, ContentType: res.ContentType},
 	}, nil
+}
+
+func applyV2ScrapeOptions(dst *scraper.ScrapeOptions, src *apiv2.ScrapeOptions) {
+	if dst == nil || src == nil {
+		return
+	}
+	if len(src.Headers) > 0 {
+		dst.Headers = src.Headers
+	}
+	dst.OnlyMainContent = src.OnlyMainContent
+	dst.IncludeTags = src.IncludeTags
+	dst.ExcludeTags = src.ExcludeTags
 }
 
 func extractTypesFor(formats apiv2.Formats) []string {
@@ -396,7 +582,7 @@ func rawSchema(v any) json.RawMessage {
 	return data
 }
 
-func (w *V2Worker) deliver(ctx context.Context, job *store.V2Job, event string, data json.RawMessage) {
+func (w *V2Worker) deliver(ctx context.Context, job *store.V2Job, event string, payload any) {
 	if len(job.Webhook) == 0 {
 		return
 	}
@@ -404,9 +590,20 @@ func (w *V2Worker) deliver(ctx context.Context, job *store.V2Job, event string, 
 	if err := json.Unmarshal(job.Webhook, &hook); err != nil || hook.URL == "" {
 		return
 	}
+	if !webhookEventEnabled(hook.Events, event) {
+		return
+	}
+	meta := hook.Metadata
+	if meta == nil {
+		meta = map[string]string{}
+	}
 	body, _ := json.Marshal(map[string]any{
-		"success": true, "type": event, "id": job.ID.String(), "data": json.RawMessage(data),
+		"success": true, "type": event, "id": job.ID.String(), "data": payload, "metadata": meta,
 	})
+	if err := scraper.ValidatePublicURL(ctx, hook.URL); err != nil {
+		metrics.JobsTotal.WithLabelValues("webhook_failed").Inc()
+		return
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hook.URL, bytes.NewReader(body))
 	if err != nil {
 		return
@@ -418,10 +615,16 @@ func (w *V2Worker) deliver(ctx context.Context, job *store.V2Job, event string, 
 	if w.WebhookSecret != "" {
 		mac := hmac.New(sha256.New, []byte(w.WebhookSecret))
 		mac.Write(body)
-		req.Header.Set("x-firecrawl-signature", hex.EncodeToString(mac.Sum(nil)))
+		req.Header.Set("X-Webhook-Signature", hex.EncodeToString(mac.Sum(nil)))
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			if err := scraper.ValidatePublicURL(ctx, hook.URL); err != nil {
+				metrics.JobsTotal.WithLabelValues("webhook_failed").Inc()
+				return
+			}
+		}
 		attemptReq, err := http.NewRequestWithContext(ctx, http.MethodPost, hook.URL, bytes.NewReader(body))
 		if err != nil {
 			return
@@ -430,8 +633,12 @@ func (w *V2Worker) deliver(ctx context.Context, job *store.V2Job, event string, 
 		res, err := client.Do(attemptReq)
 		if err == nil {
 			res.Body.Close()
-			if res.StatusCode < 500 && res.StatusCode != http.StatusTooManyRequests {
+			if res.StatusCode >= 200 && res.StatusCode < 300 {
 				metrics.JobsTotal.WithLabelValues("webhook").Inc()
+				return
+			}
+			if res.StatusCode >= 400 && res.StatusCode < 500 && res.StatusCode != http.StatusTooManyRequests {
+				metrics.JobsTotal.WithLabelValues("webhook_failed").Inc()
 				return
 			}
 		}
@@ -440,6 +647,22 @@ func (w *V2Worker) deliver(ctx context.Context, job *store.V2Job, event string, 
 		}
 	}
 	metrics.JobsTotal.WithLabelValues("webhook_failed").Inc()
+}
+
+func webhookEventEnabled(events []string, event string) bool {
+	kind := "completed"
+	if i := strings.LastIndex(event, "."); i >= 0 {
+		kind = event[i+1:]
+	}
+	if len(events) == 0 {
+		return true
+	}
+	for _, e := range events {
+		if e == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func mustJSON(v any) json.RawMessage {

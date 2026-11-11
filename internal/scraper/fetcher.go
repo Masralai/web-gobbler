@@ -41,6 +41,12 @@ func fetchHTTP(ctx context.Context, rawURL string, opts *ScrapeOptions) ([]byte,
 	req.Header.Set("User-Agent", opts.UserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	for k, v := range opts.Headers {
+		if k == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
