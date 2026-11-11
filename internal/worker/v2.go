@@ -139,10 +139,15 @@ func (w *V2Worker) processScrapeJob(ctx context.Context, job *store.V2Job) error
 
 func (w *V2Worker) processPage(ctx context.Context, job *store.V2Job) error {
 	if job.ParentID != nil {
-		if p, err := w.Store.GetV2Job(ctx, *job.ParentID); err == nil && p.Kind == store.KindBatch && p.Status == "queued" {
-			if claimed, _ := w.Store.SetV2Processing(ctx, p.ID); claimed {
-				w.deliver(ctx, p, "batch_scrape.started", map[string]any{"success": true})
-				_ = w.Store.ClearV2LeaseKeepProcessing(ctx, p.ID)
+		if p, err := w.Store.GetV2Job(ctx, *job.ParentID); err == nil {
+			if p.Status == "cancelled" {
+				return nil
+			}
+			if p.Kind == store.KindBatch && p.Status == "queued" {
+				if claimed, _ := w.Store.SetV2Processing(ctx, p.ID); claimed {
+					w.deliver(ctx, p, "batch_scrape.started", map[string]any{"success": true})
+					_ = w.Store.ClearV2LeaseKeepProcessing(ctx, p.ID)
+				}
 			}
 		}
 	}
@@ -156,6 +161,9 @@ func (w *V2Worker) processPage(ctx context.Context, job *store.V2Job) error {
 	}
 	doc, err := w.scrape(ctx, apiv2.ScrapeRequest{URL: job.URL, ScrapeOptions: opts})
 	if err != nil {
+		if job.ParentID != nil {
+			_ = w.maybeCompleteBatch(ctx, *job.ParentID)
+		}
 		return err
 	}
 	doc.Metadata.ScrapeID = job.ID.String()
@@ -164,8 +172,13 @@ func (w *V2Worker) processPage(ctx context.Context, job *store.V2Job) error {
 		return err
 	}
 	if job.ParentID != nil {
-		if p, err := w.Store.GetV2Job(ctx, *job.ParentID); err == nil && p.Kind == store.KindBatch {
-			w.deliver(ctx, p, "batch_scrape.page", map[string]any{"success": true, "data": []apiv2.Document{doc}, "scrapeId": job.ID.String()})
+		if p, err := w.Store.GetV2Job(ctx, *job.ParentID); err == nil {
+			if p.Status == "cancelled" {
+				return nil
+			}
+			if p.Kind == store.KindBatch {
+				w.deliver(ctx, p, "batch_scrape.page", map[string]any{"success": true, "data": []apiv2.Document{doc}, "scrapeId": job.ID.String()})
+			}
 		}
 		return w.maybeCompleteBatch(ctx, *job.ParentID)
 	}
@@ -240,7 +253,8 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 	}
 	pathAllowedCrawl := func(raw string) bool {
 		target := raw
-		if u, err := url.Parse(raw); err == nil && !req.RegexOnFullURL {
+		regexOnFull := req.RegexOnFullURL != nil && *req.RegexOnFullURL
+		if u, err := url.Parse(raw); err == nil && !regexOnFull {
 			target = u.Path
 		}
 		for _, p := range req.ExcludePaths {
@@ -300,7 +314,7 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 	docs := make([]apiv2.Document, 0)
 	for len(queue) > 0 && pagesProcessed < limit {
 		if cancelled() {
-			break
+			return nil
 		}
 		item := queue[0]
 		queue = queue[1:]
@@ -320,6 +334,9 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 			pr.RawHTML = page.RawHTML
 			pr.HTTPStatus = page.HTTPStatus
 			pr.Truncated = page.Truncated
+		}
+		if cancelled() {
+			return nil
 		}
 
 		doc := docFromPage(pr, req.ScrapeOptions)
@@ -348,20 +365,22 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 			if item.Depth < maxDepth && pagesProcessed < limit {
 				for _, link := range pr.Links {
 					enqueue(link, item.Depth+1)
-					if len(queue)+pagesProcessed >= limit*4 { // soft bound to avoid runaway queue
-						// continue; we'll still process up to limit pages
-					}
 				}
 			}
 		}
 		if req.Delay > 0 {
+			timer := time.NewTimer(time.Duration(req.Delay) * time.Second)
 			select {
 			case <-ctx.Done():
-			case <-time.After(time.Duration(req.Delay) * time.Second):
+				timer.Stop()
+			case <-timer.C:
 			}
 		}
 	}
 
+	if cancelled() {
+		return nil
+	}
 	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", mustJSON(map[string]any{"pages_crawled": pagesProcessed}), nil, nil, 0, int64Ptr(time.Since(start).Milliseconds())); err != nil {
 		return err
 	}
@@ -435,7 +454,7 @@ func (w *V2Worker) processExtract(ctx context.Context, job *store.V2Job) error {
 }
 
 func (w *V2Worker) maybeCompleteBatch(ctx context.Context, parent uuid.UUID) error {
-	completed, processing, queued, total, err := w.Store.V2ChildCounts(ctx, parent)
+	_, processing, queued, total, err := w.Store.V2ChildCounts(ctx, parent)
 	if err != nil {
 		return err
 	}
@@ -464,8 +483,6 @@ func (w *V2Worker) maybeCompleteBatch(ctx context.Context, parent uuid.UUID) err
 		}
 	}
 	w.deliver(ctx, p, "batch_scrape.completed", map[string]any{"success": true, "data": docs})
-	_ = completed
-	_ = total
 	return nil
 }
 

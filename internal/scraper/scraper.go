@@ -86,16 +86,23 @@ var DefaultBrowserFetcher Fetcher = NewBrowserFetcher(2)
 
 // PageResult is one page within a crawl/map job result.
 type PageResult struct {
-	URL        string   `json:"url"`
-	Depth      int      `json:"depth"`
-	Links      []string `json:"links,omitempty"`
-	Headers    []string `json:"headers,omitempty"`
-	Paragraphs []string `json:"paragraphs,omitempty"`
-	Markdown   string   `json:"markdown,omitempty"`
-	HTML       string   `json:"html,omitempty"`
-	RawHTML    string   `json:"raw_html,omitempty"`
-	HTTPStatus int      `json:"http_status,omitempty"`
-	Truncated  bool     `json:"truncated,omitempty"`
+	URL         string   `json:"url"`
+	Depth       int      `json:"depth"`
+	Links       []string `json:"links,omitempty"`
+	Headers     []string `json:"headers,omitempty"`
+	Paragraphs  []string `json:"paragraphs,omitempty"`
+	Markdown    string   `json:"markdown,omitempty"`
+	HTML        string   `json:"html,omitempty"`
+	RawHTML     string   `json:"raw_html,omitempty"`
+	HTTPStatus  int      `json:"http_status,omitempty"`
+	Truncated   bool     `json:"truncated,omitempty"`
+	Title       string   `json:"title,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Language    string   `json:"language,omitempty"`
+	Keywords    string   `json:"keywords,omitempty"`
+	RobotsMeta  string   `json:"robots_meta,omitempty"`
+	OgImage     string   `json:"og_image,omitempty"`
+	Favicon     string   `json:"favicon,omitempty"`
 }
 
 // Result holds scrape/crawl/map output.
@@ -114,6 +121,13 @@ type Result struct {
 	HTTPStatus   int          `json:"http_status"`
 	ContentType  string       `json:"content_type,omitempty"`
 	FinalURL     string       `json:"final_url,omitempty"`
+	Title        string       `json:"title,omitempty"`
+	Description  string       `json:"description,omitempty"`
+	Language     string       `json:"language,omitempty"`
+	Keywords     string       `json:"keywords,omitempty"`
+	RobotsMeta   string       `json:"robots_meta,omitempty"`
+	OgImage      string       `json:"og_image,omitempty"`
+	Favicon      string       `json:"favicon,omitempty"`
 	DurationMs   int64        `json:"duration_ms"`
 }
 
@@ -163,6 +177,15 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 
 	result := &Result{HTTPStatus: httpStatus, ContentType: meta.contentType, FinalURL: meta.finalURL}
 	extractSet := buildExtractSet(extractTypes)
+
+	metaInfo := extractPageMeta(doc, parsedURL)
+	result.Title = metaInfo.Title
+	result.Description = metaInfo.Description
+	result.Language = metaInfo.Language
+	result.Keywords = metaInfo.Keywords
+	result.RobotsMeta = metaInfo.Robots
+	result.OgImage = metaInfo.OgImage
+	result.Favicon = metaInfo.Favicon
 
 	if extractSet["links"] || extractSet["all"] {
 		result.Links = extractLinks(doc, parsedURL)
@@ -305,4 +328,97 @@ func extractParagraphs(doc *goquery.Document) []string {
 		}
 	})
 	return paragraphs
+}
+
+
+type pageMeta struct {
+	Title       string
+	Description string
+	Language    string
+	Keywords    string
+	Robots      string
+	OgImage     string
+	Favicon     string
+}
+
+func extractPageMeta(doc *goquery.Document, baseURL *url.URL) pageMeta {
+	var m pageMeta
+	if doc == nil {
+		return m
+	}
+	m.Title = strings.TrimSpace(doc.Find("title").First().Text())
+	if m.Title == "" {
+		m.Title = strings.TrimSpace(doc.Find("h1").First().Text())
+	}
+	if lang, ok := doc.Find("html").First().Attr("lang"); ok {
+		m.Language = strings.TrimSpace(lang)
+	}
+	doc.Find("meta").Each(func(_ int, s *goquery.Selection) {
+		name, _ := s.Attr("name")
+		prop, _ := s.Attr("property")
+		content, _ := s.Attr("content")
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(prop))
+		}
+		content = strings.TrimSpace(content)
+		if content == "" || key == "" {
+			return
+		}
+		switch key {
+		case "description":
+			if m.Description == "" {
+				m.Description = content
+			}
+		case "keywords":
+			if m.Keywords == "" {
+				m.Keywords = content
+			}
+		case "robots":
+			if m.Robots == "" {
+				m.Robots = content
+			}
+		case "og:image":
+			if m.OgImage == "" {
+				m.OgImage = resolveMaybeURL(baseURL, content)
+			}
+		case "og:description":
+			if m.Description == "" {
+				m.Description = content
+			}
+		}
+	})
+	doc.Find("link[rel]").Each(func(_ int, s *goquery.Selection) {
+		rel, _ := s.Attr("rel")
+		href, _ := s.Attr("href")
+		rel = strings.ToLower(strings.TrimSpace(rel))
+		href = strings.TrimSpace(href)
+		if href == "" {
+			return
+		}
+		switch rel {
+		case "icon", "shortcut icon", "apple-touch-icon":
+			if m.Favicon == "" {
+				m.Favicon = resolveMaybeURL(baseURL, href)
+			}
+		}
+	})
+	return m
+}
+
+func resolveMaybeURL(baseURL *url.URL, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if baseURL != nil {
+		u = baseURL.ResolveReference(u)
+	}
+	if u.Scheme == "http" || u.Scheme == "https" || u.Scheme == "" {
+		return u.String()
+	}
+	return raw
 }

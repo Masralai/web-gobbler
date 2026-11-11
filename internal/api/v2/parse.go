@@ -33,26 +33,27 @@ func (h *Handler) HandleParse(c *gin.Context) {
 		writeBadRequest(c, "url is not accepted for parse requests")
 		return
 	}
+	type parseOptions struct {
+		Formats         Formats         `json:"formats,omitempty"`
+		OnlyMainContent *bool           `json:"onlyMainContent,omitempty"`
+		IncludeTags     []string        `json:"includeTags,omitempty"`
+		ExcludeTags     []string        `json:"excludeTags,omitempty"`
+		Timeout         int             `json:"timeout,omitempty"`
+		WaitFor         int             `json:"waitFor,omitempty"`
+		Headers         json.RawMessage `json:"headers,omitempty"`
+		Location        json.RawMessage `json:"location,omitempty"`
+		MaxAge          int             `json:"maxAge,omitempty"`
+		Origin          string          `json:"origin,omitempty"`
+		Integration     *string         `json:"integration,omitempty"`
+		Actions         []Action        `json:"actions,omitempty"`
+		Screenshot      json.RawMessage `json:"screenshot,omitempty"`
+		Branding        json.RawMessage `json:"branding,omitempty"`
+		ChangeTracking  json.RawMessage `json:"changeTracking,omitempty"`
+		Mobile          json.RawMessage `json:"mobile,omitempty"`
+		Proxy           json.RawMessage `json:"proxy,omitempty"`
+	}
+	var opts parseOptions
 	if optStr := c.PostForm("options"); strings.TrimSpace(optStr) != "" {
-		var opts struct {
-			Formats         Formats         `json:"formats,omitempty"`
-			OnlyMainContent *bool           `json:"onlyMainContent,omitempty"`
-			IncludeTags     []string        `json:"includeTags,omitempty"`
-			ExcludeTags     []string        `json:"excludeTags,omitempty"`
-			Timeout         int             `json:"timeout,omitempty"`
-			WaitFor         int             `json:"waitFor,omitempty"`
-			Headers         json.RawMessage `json:"headers,omitempty"`
-			Location        json.RawMessage `json:"location,omitempty"`
-			MaxAge          int             `json:"maxAge,omitempty"`
-			Origin          string          `json:"origin,omitempty"`
-			Integration     *string         `json:"integration,omitempty"`
-			Actions         []Action        `json:"actions,omitempty"`
-			Screenshot      json.RawMessage `json:"screenshot,omitempty"`
-			Branding        json.RawMessage `json:"branding,omitempty"`
-			ChangeTracking  json.RawMessage `json:"changeTracking,omitempty"`
-			Mobile          json.RawMessage `json:"mobile,omitempty"`
-			Proxy           json.RawMessage `json:"proxy,omitempty"`
-		}
 		if err := strictUnmarshal([]byte(optStr), &opts); err != nil {
 			writeBadRequest(c, "options must be a JSON object with supported parse fields")
 			return
@@ -95,12 +96,13 @@ func (h *Handler) HandleParse(c *gin.Context) {
 		}
 	}
 	ext := strings.ToLower(filepath.Ext(header.Filename))
+	sopts := &scraper.ScrapeOptions{OnlyMainContent: opts.OnlyMainContent, IncludeTags: opts.IncludeTags, ExcludeTags: opts.ExcludeTags}
 	var markdown string
 	switch ext {
 	case ".txt", ".md":
 		markdown = string(data)
 	case ".html", ".htm":
-		markdown, err = scraper.MarkdownFromHTML(data)
+		markdown, err = scraper.MarkdownFromHTMLWithOptions(data, sopts)
 		if err != nil {
 			writeBadRequest(c, "failed to parse HTML")
 			return
@@ -134,7 +136,7 @@ func (h *Handler) HandleParse(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": Document{
 		Markdown: markdown,
-		Metadata: Metadata{URL: header.Filename, StatusCode: 200, ContentType: contentType},
+		Metadata: Metadata{URL: header.Filename, SourceURL: header.Filename, StatusCode: 200, ContentType: contentType},
 	}})
 }
 

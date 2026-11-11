@@ -86,16 +86,32 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 		parentID = id
 	}
 
+	createdChildren := make([]uuid.UUID, 0, len(valid))
 	for _, raw := range valid {
 		childID, err := h.Store.CreateV2Child(c.Request.Context(), parentID, raw, 0, mustJSON(req))
 		if err != nil {
-			writeError(c, 500, CodeUnknown, "failed to create batch children")
+			msg := "failed to create batch children"
+			for _, cid := range createdChildren {
+				_ = h.Store.UpdateV2Job(c.Request.Context(), cid, "failed", nil, &msg, nil, 0, nil)
+			}
+			if !appending {
+				_ = h.Store.UpdateV2Job(c.Request.Context(), parentID, "failed", nil, &msg, nil, 0, nil)
+			}
+			writeError(c, 500, CodeUnknown, msg)
 			return
 		}
+		createdChildren = append(createdChildren, childID)
 		if err := h.Queue.PublishStream(c.Request.Context(), queue.StreamDefault, queue.StreamPayload{
 			JobID: childID.String(), Kind: store.KindPage, ParentID: parentID.String(), URL: raw,
 		}); err != nil {
-			writeError(c, 500, CodeUnknown, "failed to queue batch")
+			msg := "failed to queue batch"
+			for _, cid := range createdChildren {
+				_ = h.Store.UpdateV2Job(c.Request.Context(), cid, "failed", nil, &msg, nil, 0, nil)
+			}
+			if !appending {
+				_ = h.Store.UpdateV2Job(c.Request.Context(), parentID, "failed", nil, &msg, nil, 0, nil)
+			}
+			writeError(c, 500, CodeUnknown, msg)
 			return
 		}
 	}

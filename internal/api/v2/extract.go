@@ -94,7 +94,9 @@ func (h *Handler) HandleExtract(c *gin.Context) {
 	if err := h.Queue.PublishStream(c.Request.Context(), queue.StreamDefault, queue.StreamPayload{
 		JobID: id.String(), Kind: store.KindExtract, URL: req.URLs[0],
 	}); err != nil {
-		writeError(c, 500, CodeUnknown, "failed to queue extract")
+		msg := "failed to queue extract"
+		_ = h.Store.UpdateV2Job(c.Request.Context(), id, "failed", nil, &msg, nil, 0, nil)
+		writeError(c, 500, CodeUnknown, msg)
 		return
 	}
 	c.Header("Deprecation", "true")

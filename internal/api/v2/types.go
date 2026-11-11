@@ -29,6 +29,10 @@ type Metadata struct {
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 	Language    string `json:"language,omitempty"`
+	Keywords    string `json:"keywords,omitempty"`
+	Robots      string `json:"robots,omitempty"`
+	OgImage     string `json:"ogImage,omitempty"`
+	Favicon     string `json:"favicon,omitempty"`
 }
 
 type ErrorResponse struct {

@@ -95,7 +95,9 @@ func (h *Handler) HandleCrawl(c *gin.Context) {
 	if err := h.Queue.PublishStream(c.Request.Context(), queue.StreamDefault, queue.StreamPayload{
 		JobID: id.String(), Kind: store.KindCrawl, URL: req.URL,
 	}); err != nil {
-		writeError(c, 500, CodeUnknown, "failed to queue crawl")
+		msg := "failed to queue crawl"
+		_ = h.Store.UpdateV2Job(c.Request.Context(), id, "failed", nil, &msg, nil, 0, nil)
+		writeError(c, 500, CodeUnknown, msg)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "id": id.String(), "url": h.baseURL(c) + "/v2/crawl/" + id.String()})
@@ -247,7 +249,7 @@ func (h *Handler) HandleOngoingCrawls(c *gin.Context) {
 }
 
 func (h *Handler) HandleCrawlPreview(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"success": false, "error": "crawl params preview is not available in this deployment"})
+		writeError(c, http.StatusNotImplemented, "NOT_IMPLEMENTED", "crawl params preview is not available in this deployment")
 }
 
 func (h *Handler) HandleMap(c *gin.Context) {
@@ -304,20 +306,40 @@ func (h *Handler) HandleMap(c *gin.Context) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.Timeout)*time.Millisecond)
 		defer cancel()
 	}
-	res, err := crawl.MapBFS(ctx, req.URL, crawl.Options{
-		MaxURLs: req.Limit, MaxDepth: 2, Scrape: *opts,
-	}, nil, nil)
-	if err != nil {
-		if ctx.Err() != nil || strings.Contains(err.Error(), "timeout") {
-			writeError(c, http.StatusRequestTimeout, CodeTimeout, "map timed out")
+	seed, _ := url.Parse(req.URL)
+	candidates := make([]string, 0)
+	seenCandidates := map[string]bool{}
+	addCandidate := func(raw string) {
+		if raw == "" || seenCandidates[raw] {
 			return
 		}
-		writeError(c, 500, CodeUnknown, "map failed")
-		return
+		seenCandidates[raw] = true
+		candidates = append(candidates, raw)
 	}
-	seed, _ := url.Parse(req.URL)
-	links := make([]map[string]string, 0, len(res.URLs))
-	for _, raw := range res.URLs {
+	if req.Sitemap != "skip" {
+		sitemapURLs, _ := crawl.DiscoverSitemapURLs(ctx, req.URL, req.Sitemap, nil, *opts, req.Limit)
+		for _, u := range sitemapURLs {
+			addCandidate(u)
+		}
+	}
+	if req.Sitemap != "only" {
+		res, err := crawl.MapBFS(ctx, req.URL, crawl.Options{
+			MaxURLs: req.Limit, MaxDepth: 2, Scrape: *opts,
+		}, nil, nil)
+		if err != nil {
+			if ctx.Err() != nil || strings.Contains(err.Error(), "timeout") {
+				writeError(c, http.StatusRequestTimeout, CodeTimeout, "map timed out")
+				return
+			}
+			writeError(c, 500, CodeUnknown, "map failed")
+			return
+		}
+		for _, u := range res.URLs {
+			addCandidate(u)
+		}
+	}
+	links := make([]map[string]any, 0, len(candidates))
+	for _, raw := range candidates {
 		u, err := url.Parse(raw)
 		if err != nil {
 			continue
@@ -338,7 +360,8 @@ func (h *Handler) HandleMap(c *gin.Context) {
 		if req.Search != "" && !strings.Contains(strings.ToLower(target), strings.ToLower(req.Search)) {
 			continue
 		}
-		links = append(links, map[string]string{"url": target})
+		item := map[string]any{"url": target}
+		links = append(links, item)
 		if len(links) >= req.Limit {
 			break
 		}
