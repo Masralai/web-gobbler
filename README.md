@@ -4,52 +4,41 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Masralai/web-gobbler)](https://golang.org/dl/)
 
-Distributed web scraping service built with Go (Gin), Redis, PostgreSQL, and Docker.
-
-Submit scraping jobs via HTTP, process them asynchronously through a worker pool, and retrieve results via a REST API. Horizontally scalable on AWS ECS Fargate.
+Distributed web scraping service built with Go (Gin), Redis, PostgreSQL, and Docker. Public scraping API is exposed as a v2-compatible subset under `/v2`.
 
 > [!TIP]
 > **Get started in 2 commands:**
 >
 > ```bash
 > docker compose up -d
-> curl http://localhost:8080/api/v1/health
+> curl -s http://localhost:8080/v2/scrape -H 'Content-Type: application/json' -d '{"url":"https://example.com","formats":["markdown"]}'
 > ```
 >
-> End-to-end tutorial (scrape → LLM extract): **[docs/how-to/getting-started.md](docs/how-to/getting-started.md)**. Full run guide (crawl, browser, tests): **[docs/how-to/run.md](docs/how-to/run.md)**. Product phases: **[spec.md](spec.md)**.
-> For a local AWS-shaped sandbox ($0): **`./scripts/floci-up.sh`** — see [Floci sandbox](#floci-sandbox-local-aws-0).
+> Health: `GET /health`, `GET /ready`, `GET /api/v1/health` (non-scraping). API contract/spec: [spec/spec-architecture-v2-port.md](spec/spec-architecture-v2-port.md). OpenAPI: [openapi-v2.json](openapi-v2.json). For a local AWS-shaped sandbox ($0): **`./scripts/floci-up.sh`** — see [Floci sandbox](#floci-sandbox-local-aws-0).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Client -->|POST /scrape| API[Gin REST API]
-    API -->|enqueue job| Redis[(Redis Job Queue)]
-    Worker[Worker Pool<br/>goroutines] -->|dequeue job| Redis
+    Client -->|POST /v2/scrape| API[Gin REST API]
+    API -->|sync scrape / enqueue jobs| Redis[(Redis Streams/Queue)]
+    Worker[Worker Pool] -->|dequeue job| Redis
     Worker -->|persist result| PG[(PostgreSQL)]
-    API -->|GET /jobs/:id| PG
+    API -->|GET /v2/crawl/:id| PG
     PG -->|metrics| Prom[Prometheus]
     Prom -->|dashboard| Graf[Grafana]
 ```
 
-> [!NOTE]
-> Jobs flow: HTTP 202 accepted → enqueued in Redis → picked up by a worker → result persisted to PostgreSQL. All workers share the same queue and coordinate via Redis.
-
 ## Features
 
-- Configurable extraction — `markdown`, `html`, `raw_html`, links, headers, paragraphs
-- Crawl / map — same-origin multi-page jobs and URL discovery
-- Optional JS render — `options.render_js` with compose profile `browser`
-- Optional LLM extract — `POST /jobs/:id/extract` when `LLM_API_KEY` is set (not an agent)
-- Async job processing — non-blocking HTTP responses, workers pick jobs from Redis
-- Per-domain rate limiting — 2 req/s default per hostname
-- Retry with exponential backoff — 100ms × 2ⁿ, configurable max attempts
-- Metrics — Prometheus counters/histograms/gauges, Grafana dashboard
-- Pagination — list jobs with status filtering and pagination
-- Health checks — liveness/readiness with DB + Redis status
-- SSRF protection — private IP ranges blocked, max 5 redirects enforced
-- Security hardening — body size limit (1 MB), security headers, sentinel errors
-- Production-ready — distroless Docker images, Terraform for AWS, GitHub Actions CI
+- v2 routes: scrape, crawl, map, batch scrape, search (SearXNG), extract (LLM), parse, concurrency check
+- Configurable scrape formats: `markdown`, `html`, `rawHtml`, `links` (plus JSON/screenshot formats per spec/provider availability)
+- Async jobs for crawl/batch/extract with status/cancel/errors routes
+- Per-domain rate limiting, retries/backoff in worker paths
+- SSRF protections and strict request validation
+- Health checks: `/health`, `/ready`, `/api/v1/health`
+- Prometheus metrics, Grafana dashboard
+- Distroless Docker images, Terraform for AWS/OCI deployment profiles
 
 ## Local development
 
@@ -64,249 +53,76 @@ flowchart LR
 docker compose up -d
 ```
 
-This starts: API (port 8080), worker, PostgreSQL (5432), Redis (6379), Prometheus (9090), Grafana (3000).
-
-> [!WARNING]
-> Ports 8080, 5432, 6379, 9090, and 3000 must be free on the host. Run `docker compose ps` to verify all services are healthy.
+This starts API (port 8080), worker, PostgreSQL, Redis, Prometheus, Grafana (per compose config).
 
 ### Verify
 
 ```bash
+curl http://localhost:8080/health
 curl http://localhost:8080/api/v1/health
-# also: curl http://localhost:8080/health
+curl -s http://localhost:8080/v2/scrape \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com","formats":["markdown"]}'
 ```
 
-```json
-{"status":"ok","db":"ok","redis":"ok","version":"1.0.0"}
-```
+Migrations run automatically on API/worker startup (`store.Migrate`) when enabled.
 
-Migrations run automatically on API/worker startup (`store.Migrate`). No manual SQL step required for Compose.
-
-See **[docs/how-to/run.md](docs/how-to/run.md)** for scrape/crawl/map examples, browser profile, LLM extract, and the feature-matrix script.
+See [spec/spec-architecture-v2-port.md](spec/spec-architecture-v2-port.md) for request/response contracts and implementation status. For local AWS sandbox: [docs/FLOCI_SANDBOX.md](docs/FLOCI_SANDBOX.md).
 
 ## Floci sandbox (local AWS, $0)
 
-Practice the real AWS resource graph (VPC → RDS → ElastiCache → ECR → ECS) against a local [Floci](https://floci.io) endpoint — **no AWS account and no cloud spend**. This is **local-only**; it does not deploy to real AWS.
+Practice the real AWS resource graph (VPC → RDS → ElastiCache → ECR → ECS) against a local [Floci](https://floci.io) endpoint — **no AWS account and no cloud spend**. Local-only.
 
 Normal `docker compose up -d` is unchanged. The sandbox uses the `sandbox` compose profile and `deploy_mode=floci`.
-
-### Prerequisites
-
-- **Docker** (Compose v2) with the engine running
-- **Terraform** >= 1.6
-- **AWS CLI** v2 (talks to Floci at `http://localhost:4566` with dummy `test`/`test` credentials)
-- `curl`, `bash`, `python3` (smoke-test JSON parsing)
 
 ### Run
 
 ```bash
 ./scripts/floci-up.sh
-# optional end-to-end scrape:
+# optional end-to-end scrape smoke test (/v2/scrape):
 ./scripts/floci-up.sh --smoke-test
 ```
 
-The script starts Floci, applies Terraform (`deploy_mode=floci`), builds/pushes api+worker images to the local registry, migrates Postgres, and polls `GET http://localhost:8080/api/v1/health`.
+The script starts Floci, applies Terraform (`deploy_mode=floci`), builds/pushes api+worker images, migrates Postgres, and polls `GET http://localhost:8080/api/v1/health` (health route retained). Teardown: `docker compose --profile sandbox down -v`.
 
-### What it provisions
+See **[docs/PRD_FLOCI_SANDBOX.md](docs/PRD_FLOCI_SANDBOX.md)** and **[docs/FLOCI_SANDBOX.md](docs/FLOCI_SANDBOX.md)**.
 
-Against Floci’s LocalStack-compatible API (backed by real Postgres, Valkey, Docker ECS tasks, and a local ECR registry): VPC/subnets/SGs, RDS PostgreSQL, ElastiCache/Valkey, ECR repos, ECS cluster + api/worker services (bridge/`hostPort: 8080` in the sandbox). ALB and worker autoscaling are omitted under Floci — see the downgrade table below.
+## API (v2)
 
-### Teardown
+Base URL: server root (no `/api` prefix). Auth: `Authorization: Bearer <API_KEY>` when `API_KEY` is set. Full contract and intentional deviations: [spec/spec-architecture-v2-port.md](spec/spec-architecture-v2-port.md). OpenAPI: [openapi-v2.json](openapi-v2.json).
+
+### Common routes
+
+- `POST /v2/scrape` — synchronous scrape (`url`, `formats` like `["markdown","links"]`, `timeout`, etc.) → `{success,data,scrape_id}`
+- `GET /v2/scrape/:jobId` — scrape status/document
+- `POST /v2/crawl` → `{success,id,url}`; `GET /v2/crawl/:jobId` (status, pagination), `DELETE /v2/crawl/:jobId`, `GET /v2/crawl/:jobId/errors`, `GET /v2/crawl/ongoing|active`
+- `POST /v2/map` → `{success,id,links}`
+- `POST /v2/batch/scrape` and `GET|DELETE /v2/batch/scrape/:jobId`, `GET /v2/batch/scrape/:jobId/errors`
+- `POST|GET /v2/search` (requires `SEARXNG_ENDPOINT`)
+- `POST /v2/extract`, `GET /v2/extract/:jobId` (requires LLM config; disabled in demo mode)
+- `GET /v2/parse/formats`, `POST /v2/parse` (multipart `file`)
+- `GET /v2/concurrency-check`
+- `POST|DELETE /v2/scrape/:jobId/interact` → 501 (not implemented)
+- Health (non-v2 envelope): `GET /health`, `GET /ready`, `GET /api/v1/health`
+
+### Example: scrape
 
 ```bash
-docker compose --profile sandbox down -v
+curl -s http://localhost:8080/v2/scrape \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com","formats":["markdown","links"]}'
 ```
 
-### Negotiated downgrades
+### Example: crawl
 
-Sandbox deviations from prod Terraform are recorded in the negotiated-downgrade table in **[docs/PRD_FLOCI_SANDBOX.md](docs/PRD_FLOCI_SANDBOX.md)** (Fidelity strategy section). Also see **[docs/FLOCI_SANDBOX.md](docs/FLOCI_SANDBOX.md)**.
-
-## API documentation
-
-Base URL: `/api/v1`
-
-### POST /scrape
-
-Submit a scraping job.
-
-**Extract types:** `links`, `headers`, `paragraphs`, `markdown`, `html`, `raw_html` (combine freely).
-
-```json
-{
-  "url": "https://example.com",
-  "extract": ["markdown", "links"],
-  "options": {
-    "timeout_seconds": 15,
-    "max_retries": 3,
-    "follow_redirects": true
-  }
-}
+```bash
+curl -s http://localhost:8080/v2/crawl \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com","limit":2}'
+# poll: GET /v2/crawl/<id>
 ```
 
-| Status | Description |
-|--------|-------------|
-| `202 Accepted` | Job queued — returns `job_id` and `poll_url` |
-| `400 Bad Request` | Invalid URL, extract type, or option bounds |
-
-Response `202 Accepted`:
-
-```json
-{
-  "job_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "status": "queued",
-  "created_at": "2025-09-01T10:32:00Z",
-  "poll_url": "/api/v1/jobs/f47ac10b-58cc-4372-a567-0e02b2c3d479"
-}
-```
-
-### POST /crawl
-
-Same-origin BFS crawl (no robots.txt in v1). Defaults: `max_pages=10`, `max_depth=2` (caps 100 / 5).
-
-```json
-{
-  "url": "https://example.com",
-  "extract": ["markdown"],
-  "options": { "max_pages": 10, "max_depth": 2 }
-}
-```
-
-Completed `results` include `pages[]`, `pages_crawled`, `pages_skipped`.
-
-### POST /map
-
-URL discovery only. Defaults: `max_urls=50`, `max_depth=2` (caps 500 / 5).
-
-```json
-{
-  "url": "https://example.com",
-  "options": { "max_urls": 50, "max_depth": 2 }
-}
-```
-
-Completed `results.urls` is a string array.
-
-### POST /jobs/:id/extract
-
-Optional LLM schema extract (requires `LLM_API_KEY` on API). Returns `501` if unset. See [docs/how-to/llm-extract.md](docs/how-to/llm-extract.md).
-
-### JS rendering
-
-Pass `"options": { "render_js": true }` on scrape/crawl. Needs browser worker: `docker compose --profile browser up`. See [docs/how-to/browser-render.md](docs/how-to/browser-render.md).
-
-### GET /jobs/:id
-
-Poll job status and retrieve results.
-
-| Status | Description |
-|--------|-------------|
-| `200 OK` | Job found — returns status, results, or error |
-| `404 Not Found` | Invalid or unknown job ID |
-
-Response `200 OK` — completed:
-
-```json
-{
-  "job_id": "f47ac10b-...",
-  "status": "completed",
-  "url": "https://example.com",
-  "created_at": "2025-09-01T10:32:00Z",
-  "completed_at": "2025-09-01T10:32:03Z",
-  "duration_ms": 1240,
-  "results": {
-    "links": ["https://example.com/about"],
-    "headers": ["Welcome to Example"],
-    "paragraphs": ["This domain is for use in illustrative examples..."]
-  },
-  "meta": {
-    "links_count": 1,
-    "headers_count": 1,
-    "paragraphs_count": 1,
-    "http_status": 200,
-    "retries_used": 0
-  }
-}
-```
-
-Response `200 OK` — failed:
-
-```json
-{
-  "job_id": "f47ac10b-...",
-  "status": "failed",
-  "error": "target returned 403 after 3 retries",
-  "created_at": "2025-09-01T10:32:00Z",
-  "failed_at": "2025-09-01T10:32:08Z"
-}
-```
-
-> [!TIP]
-> Poll the `poll_url` returned in the `POST /scrape` response every 2-3 seconds until the status changes from `queued`/`processing` to `completed` or `failed`.
-
-### GET /jobs
-
-List jobs with pagination and optional status filter.
-
-**Query params:** `page` (default 1), `limit` (default 20, max 100), `status` (queued|processing|completed|failed)
-
-| Status | Description |
-|--------|-------------|
-| `200 OK` | Returns paginated job list |
-
-Response `200 OK`:
-
-```json
-{
-  "jobs": [
-    {
-      "job_id": "f47ac10b-...",
-      "url": "https://example.com",
-      "status": "completed",
-      "created_at": "2025-09-01T10:32:00Z",
-      "updated_at": "2025-09-01T10:32:03Z"
-    }
-  ],
-  "total": 1,
-  "page": 1,
-  "limit": 20
-}
-```
-
-### DELETE /jobs/:id
-
-Cancel a queued job.
-
-| Status | Description |
-|--------|-------------|
-| `200 OK` | Job cancelled |
-| `409 Conflict` | Job cannot be cancelled (already processing or done) |
-| `404 Not Found` | Invalid or unknown job ID |
-
-Response `200 OK`: `{"status": "cancelled"}`
-
-### GET /health
-
-Liveness and readiness check.
-
-| Status | Description |
-|--------|-------------|
-| `200 OK` | All dependencies reachable |
-| `503 Service Unavailable` | DB or Redis unreachable |
-
-Response `200 OK`:
-
-```json
-{"status":"ok","db":"ok","redis":"ok","version":"1.0.0"}
-```
-
-Response `503`:
-
-```json
-{"status":"degraded","db":"degraded","redis":"ok","version":"1.0.0"}
-```
-
-> [!IMPORTANT]
-> Error details are logged server-side only. The health endpoint returns generic `"degraded"` status to avoid leaking internal state.
+Legacy `/api/v1` scraping routes (`/scrape`, `/crawl`, `/map`, `/jobs*`) are not registered by default; use `/v2`. See the spec for status codes, envelopes, and unsupported fields.
 
 ## Running tests
 

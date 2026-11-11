@@ -233,35 +233,21 @@ fi
 # ── Smoke (optional) ───────────────────────────────────────
 smoke_status="skipped"
 if [[ $SMOKE_TEST -eq 1 ]]; then
-  step "SmokeTest: POST /api/v1/scrape → poll completed"
+  step "SmokeTest: POST /v2/scrape"
   smoke_status="FAILED"
-  body='{"url":"https://example.com","extract":["links"]}'
-  if create="$(curl -sf -m 30 -X POST "$API_URL/api/v1/scrape" -H 'Content-Type: application/json' -d "$body")"; then
-    job_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id") or "")' <<<"$create" 2>/dev/null || true)"
-    if [[ -z "$job_id" ]]; then
-      echo "SMOKE FAILED: no job_id in scrape response: $create" >&2
+  body='{"url":"https://example.com","formats":["markdown","links"]}'
+  auth_args=()
+  if [[ -n "${API_KEY:-}" ]]; then auth_args=(-H "Authorization: Bearer $API_KEY"); fi
+  if resp="$(curl -sf -m 60 -X POST "$API_URL/v2/scrape" "${auth_args[@]}" -H 'Content-Type: application/json' -d "$body")"; then
+    ok="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print("1" if d.get("success") and (d.get("data") or {}).get("markdown") else "0")' <<<"$resp" 2>/dev/null || echo 0)"
+    if [[ "$ok" == "1" ]]; then
+      echo "Smoke OK: /v2/scrape returned markdown"
+      smoke_status="ok"
     else
-      deadline=$((SECONDS + 120))
-      final=""
-      while (( SECONDS < deadline )); do
-        final="$(curl -sf -m 10 "$API_URL/api/v1/jobs/$job_id" || true)"
-        status="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' <<<"$final" 2>/dev/null || true)"
-        if [[ "$status" == "completed" || "$status" == "failed" ]]; then
-          break
-        fi
-        sleep 2
-      done
-      status="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' <<<"$final" 2>/dev/null || true)"
-      has_results="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print("1" if d.get("results") else "0")' <<<"$final" 2>/dev/null || echo 0)"
-      if [[ "$status" == "completed" && "$has_results" == "1" ]]; then
-        echo "Smoke OK job_id=$job_id status=completed"
-        smoke_status="ok"
-      else
-        echo "SMOKE FAILED: job $job_id status=$status" >&2
-      fi
+      echo "SMOKE FAILED: unexpected /v2/scrape response" >&2
     fi
   else
-    echo "SMOKE FAILED: POST /api/v1/scrape failed" >&2
+    echo "SMOKE FAILED: POST /v2/scrape failed" >&2
   fi
 fi
 

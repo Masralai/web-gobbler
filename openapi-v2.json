@@ -3,7 +3,7 @@
   "info": {
     "title": "Web Gobbler v2",
     "version": "2.0.0",
-    "description": "Self-host scraper API."
+    "description": "Self-hosted v2 scraper API (subset). See spec/spec-architecture-v2-port.md for contract details."
   },
   "servers": [{"url": "/"}],
   "paths": {
