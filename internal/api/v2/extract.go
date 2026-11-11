@@ -1,14 +1,20 @@
 package v2
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/Masralai/web-gobbler/internal/queue"
+	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/Masralai/web-gobbler/internal/store"
 	"github.com/gin-gonic/gin"
 )
+
+func validatePublicURL(ctx context.Context, raw string) error {
+	return scraper.ValidatePublicURL(ctx, raw)
+}
 
 func (h *Handler) HandleExtract(c *gin.Context) {
 	var req ExtractRequest
@@ -38,9 +44,18 @@ func (h *Handler) HandleExtract(c *gin.Context) {
 				writeBadRequest(c, err.Error())
 				return
 			}
-		} else {
-			valid = append(valid, u)
+			continue
 		}
+		if err := validatePublicURL(c.Request.Context(), u); err != nil {
+			if ignoreInvalid {
+				invalid = append(invalid, u)
+			} else {
+				writeBadRequest(c, "url is not allowed: "+u)
+				return
+			}
+			continue
+		}
+		valid = append(valid, u)
 	}
 	if len(valid) == 0 {
 		writeBadRequest(c, "No valid URLs provided")

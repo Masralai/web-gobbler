@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/Masralai/web-gobbler/internal/queue"
+	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/Masralai/web-gobbler/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -39,6 +40,14 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 	invalid := make([]string, 0)
 	for _, raw := range req.URLs {
 		if validateURL(raw) == nil {
+			if err := scraper.ValidatePublicURL(c.Request.Context(), raw); err != nil {
+				if ignoreInvalid {
+					invalid = append(invalid, raw)
+					continue
+				}
+				writeBadRequest(c, "url is not allowed: "+raw)
+				return
+			}
 			valid = append(valid, raw)
 		} else if ignoreInvalid {
 			invalid = append(invalid, raw)

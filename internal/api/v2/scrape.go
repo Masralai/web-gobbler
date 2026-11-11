@@ -3,6 +3,7 @@ package v2
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -21,12 +22,17 @@ func (h *Handler) HandleScrape(c *gin.Context) {
 		writeDecodeError(c, err)
 		return
 	}
-	if err := validateScrapeRequest(&req, h.Config.DemoMode); err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "not configured") {
-			writeProviderUnavailable(c, msg)
+	if err := validateScrapeRequest(&req, h.Config.DemoMode, scraper.BrowserAvailable()); err != nil {
+		var se scrapeValidationError
+		if errors.As(err, &se) {
+			if se.code == "" {
+				c.AbortWithStatusJSON(se.status, gin.H{"success": false, "error": se.msg})
+				return
+			}
+			writeError(c, se.status, se.code, se.msg)
 			return
 		}
+		msg := err.Error()
 		writeBadRequest(c, msg)
 		return
 	}
@@ -85,7 +91,7 @@ func (h *Handler) HandleScrapeStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": doc})
 }
 
-func validateScrapeRequest(req *ScrapeRequest, demo bool) error {
+func validateScrapeRequest(req *ScrapeRequest, demo, browserAvailable bool) error {
 	if strings.TrimSpace(req.URL) == "" {
 		return fmt.Errorf("url is required")
 	}
@@ -108,14 +114,21 @@ func validateScrapeRequest(req *ScrapeRequest, demo bool) error {
 	if req.Formats == nil {
 		req.Formats = Formats{{Type: "markdown"}}
 	}
+	browserRequested := req.WaitFor > 0 || len(req.Actions) > 0
 	for _, f := range req.Formats {
 		switch f.Type {
 		case "markdown", "html", "rawHtml", "links":
 		case "screenshot":
-			return fmt.Errorf("format %q requires the browser and is not implemented", f.Type)
+			browserRequested = true
+			if f.Quality != 0 && (f.Quality < 1 || f.Quality > 100) {
+				return fmt.Errorf("screenshot quality must be between 1 and 100")
+			}
+			if f.Viewport != nil && (f.Viewport.Width < 1 || f.Viewport.Width > 7680 || f.Viewport.Height < 1 || f.Viewport.Height > 4320) {
+				return fmt.Errorf("screenshot viewport must be between 1x1 and 7680x4320")
+			}
 		case "json":
 			if demo {
-				return fmt.Errorf("extract is not configured")
+				return scrapeValidationError{status: http.StatusNotImplemented, code: CodeProviderUnavailable, msg: "extract is not configured"}
 			}
 			if !req.jsonAllowed() {
 				return fmt.Errorf("json format requires prompt or schema")
@@ -124,11 +137,73 @@ func validateScrapeRequest(req *ScrapeRequest, demo bool) error {
 			return fmt.Errorf("unsupported format %q", f.Type)
 		}
 	}
-	if len(req.Actions) > 0 {
-		return fmt.Errorf("actions are not configured")
+	if err := validateActions(req.Actions, req.WaitFor); err != nil {
+		return err
 	}
-	if req.WaitFor > 0 {
-		return fmt.Errorf("waitFor is not configured")
+	if browserRequested && !browserAvailable {
+		return scrapeValidationError{status: http.StatusNotImplemented, msg: "browser is not configured"}
+	}
+	if browserRequested && browserAvailable {
+		// ponytail: execution not implemented yet; behave as unavailable rather than partial.
+		return scrapeValidationError{status: http.StatusNotImplemented, msg: "browser is not configured"}
+	}
+	return nil
+}
+
+type scrapeValidationError struct {
+	status int
+	code   string
+	msg    string
+}
+
+func (e scrapeValidationError) Error() string { return e.msg }
+
+func validateActions(actions []Action, waitFor int) error {
+	if len(actions) > 50 {
+		return fmt.Errorf("actions must contain at most 50 entries")
+	}
+	totalWait := waitFor
+	for _, a := range actions {
+		switch a.Type {
+		case "wait":
+			if (a.Milliseconds > 0) == (strings.TrimSpace(a.Selector) != "") {
+				return fmt.Errorf("wait action must include either milliseconds or selector, not both")
+			}
+			if a.Milliseconds < 0 || a.Milliseconds > 60000 {
+				return fmt.Errorf("wait milliseconds must be between 0 and 60000")
+			}
+			totalWait += a.Milliseconds
+		case "click":
+			if strings.TrimSpace(a.Selector) == "" {
+				return fmt.Errorf("click action requires selector")
+			}
+		case "screenshot":
+			if a.Quality != 0 && (a.Quality < 1 || a.Quality > 100) {
+				return fmt.Errorf("screenshot quality must be between 1 and 100")
+			}
+			if a.Viewport != nil && (a.Viewport.Width < 1 || a.Viewport.Width > 7680 || a.Viewport.Height < 1 || a.Viewport.Height > 4320) {
+				return fmt.Errorf("screenshot viewport must be between 1x1 and 7680x4320")
+			}
+		case "write":
+			if a.Text == "" {
+				return fmt.Errorf("write action requires text")
+			}
+		case "press":
+			if strings.TrimSpace(a.Key) == "" {
+				return fmt.Errorf("press action requires key")
+			}
+		case "scroll":
+			if a.Direction != "up" && a.Direction != "down" {
+				return fmt.Errorf("scroll direction must be up or down")
+			}
+		case "executeJavascript", "pdf", "scrape":
+			return fmt.Errorf("unsupported action %q", a.Type)
+		default:
+			return fmt.Errorf("unknown action type %q", a.Type)
+		}
+	}
+	if totalWait > 60000 {
+		return fmt.Errorf("total wait time must be at most 60000 milliseconds")
 	}
 	return nil
 }
@@ -161,10 +236,12 @@ func (h *Handler) scrape(ctx context.Context, req ScrapeRequest) (Document, erro
 	opts := scraper.DefaultOptions()
 	opts.Timeout = time.Duration(req.Timeout) * time.Millisecond
 	opts.UserAgent = "WebGobbler/2.0"
-	for k, v := range req.Headers {
-		_ = k
-		_ = v
+	if len(req.Headers) > 0 {
+		opts.Headers = req.Headers
 	}
+	opts.OnlyMainContent = req.OnlyMainContent
+	opts.IncludeTags = req.IncludeTags
+	opts.ExcludeTags = req.ExcludeTags
 	res, err := scraper.ScrapePage(ctx, req.URL, extractTypes, opts)
 	if err != nil {
 		return Document{}, err

@@ -19,7 +19,7 @@ const demoHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Web Gobbler — Firecrawl-compatible scraper</title>
+<title>Web Gobbler — v2 scraper</title>
 <style>
 body{font:15px/1.5 system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#111}
 h1{font-size:24px}form{display:flex;gap:8px;margin:20px 0}

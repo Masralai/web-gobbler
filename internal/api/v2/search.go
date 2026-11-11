@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -119,6 +120,9 @@ func (h *Handler) HandleSearch(c *gin.Context) {
 	for _, r := range results {
 		if len(out) >= req.Limit {
 			break
+		}
+		if err := scraper.ValidatePublicURL(ctx, r.URL); err != nil {
+			continue
 		}
 		item := webResult{URL: r.URL, Title: r.Title, Description: r.Content}
 		if req.ScrapeOptions != nil {

@@ -24,7 +24,7 @@ func TestStrictUnmarshalRejectsUnknown(t *testing.T) {
 
 func TestValidateScrapeRequestDefaultsAndBounds(t *testing.T) {
 	req := ScrapeRequest{URL: "https://example.com"}
-	if err := validateScrapeRequest(&req, false); err != nil {
+	if err := validateScrapeRequest(&req, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if req.Timeout != 30000 || len(req.Formats) != 1 || req.Formats[0].Type != "markdown" {
@@ -32,13 +32,28 @@ func TestValidateScrapeRequestDefaultsAndBounds(t *testing.T) {
 	}
 
 	req = ScrapeRequest{URL: "https://example.com", ScrapeOptions: ScrapeOptions{Timeout: 30000, WaitFor: 20000}}
-	if err := validateScrapeRequest(&req, false); err == nil {
+	if err := validateScrapeRequest(&req, false, false); err == nil {
 		t.Fatal("expected waitFor bound error")
 	}
 
 	req = ScrapeRequest{URL: "https://example.com", ScrapeOptions: ScrapeOptions{Formats: Formats{{Type: "nope"}}}}
-	if err := validateScrapeRequest(&req, false); err == nil {
+	if err := validateScrapeRequest(&req, false, false); err == nil {
 		t.Fatal("expected unsupported format error")
+	}
+}
+
+func TestValidateActions(t *testing.T) {
+	if err := validateActions([]Action{{Type: "executeJavascript"}}, 0); err == nil || err.Error() == "" {
+		t.Fatal("expected unsupported action error")
+	}
+	if err := validateActions(make([]Action, 51), 0); err == nil {
+		t.Fatal("expected action count error")
+	}
+	if err := validateActions([]Action{{Type: "wait", Milliseconds: 30000}, {Type: "wait", Milliseconds: 31000}}, 0); err == nil {
+		t.Fatal("expected total wait error")
+	}
+	if err := validateActions([]Action{{Type: "click"}}, 0); err == nil {
+		t.Fatal("expected click selector error")
 	}
 }
 

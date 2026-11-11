@@ -40,6 +40,10 @@ func (h *Handler) HandleCrawl(c *gin.Context) {
 		writeBadRequest(c, fmt.Sprintf("demo crawl limit is %d", h.demoMaxCrawl()))
 		return
 	}
+	if err := scraper.ValidatePublicURL(c.Request.Context(), req.URL); err != nil {
+		writeBadRequest(c, "url is not allowed")
+		return
+	}
 	if req.Sitemap == "" {
 		req.Sitemap = "include"
 	}
@@ -290,6 +294,9 @@ func (h *Handler) HandleMap(c *gin.Context) {
 	opts.Timeout = time.Duration(req.Timeout) * time.Millisecond
 	if req.Timeout <= 0 {
 		opts.Timeout = 30 * time.Second
+	}
+	if len(req.Headers) > 0 {
+		opts.Headers = req.Headers
 	}
 	ctx := c.Request.Context()
 	if req.Timeout > 0 {
