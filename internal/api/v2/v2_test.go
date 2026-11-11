@@ -53,3 +53,34 @@ func TestWireStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestValidatePathPatterns(t *testing.T) {
+	if err := validatePathPatterns([]string{"^/docs"}, []string{"^/admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePathPatterns([]string{"("}, nil); err == nil {
+		t.Fatal("expected invalid regex error")
+	}
+	tooMany := make([]string, 1001)
+	for i := range tooMany {
+		tooMany[i] = "a"
+	}
+	if err := validatePathPatterns(tooMany, nil); err == nil {
+		t.Fatal("expected count limit error")
+	}
+}
+
+func TestUnsupportedSearchField(t *testing.T) {
+	req := SearchRequest{IncludeDomains: []string{"example.com"}}
+	if got := unsupportedSearchField(req); got != "includeDomains" {
+		t.Fatalf("got %q", got)
+	}
+	req = SearchRequest{Lang: "en"}
+	if got := unsupportedSearchField(req); got != "lang" {
+		t.Fatalf("got %q", got)
+	}
+	req = SearchRequest{}
+	if got := unsupportedSearchField(req); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}

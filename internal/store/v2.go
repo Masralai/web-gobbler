@@ -74,6 +74,53 @@ func (s *Store) CreateV2Job(ctx context.Context, job *V2Job) (uuid.UUID, error) 
 	return id, nil
 }
 
+func (s *Store) CreateV2JobWithIdempotency(ctx context.Context, job *V2Job, key string) (uuid.UUID, bool, error) {
+	if key == "" {
+		id, err := s.CreateV2Job(ctx, job)
+		return id, false, err
+	}
+	kind := job.Kind
+	if kind == "" {
+		kind = KindScrape
+	}
+	status := job.Status
+	if status == "" {
+		status = "queued"
+	}
+	id := uuid.New()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM job_idempotency WHERE key = $1 AND created_at <= now() - interval '24 hours'`, key); err != nil {
+		return uuid.Nil, false, err
+	}
+	tag, err := tx.Exec(ctx, `INSERT INTO job_idempotency (key, job_id) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, key, id)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return uuid.Nil, true, nil
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO jobs (id, url, extract, options, status, kind, parent_id, request, webhook, depth)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		 RETURNING created_at, updated_at`,
+		id, job.URL, []string{}, nil, status, kind, job.ParentID, rawOrNil(job.Request), rawOrNil(job.Webhook), nullInt(job.Depth),
+	).Scan(&job.CreatedAt, &job.UpdatedAt); err != nil {
+		return uuid.Nil, false, fmt.Errorf("insert v2 job: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, false, err
+	}
+	job.ID = id
+	job.Kind = kind
+	job.Status = status
+	return id, false, nil
+}
+
 func (s *Store) GetV2Job(ctx context.Context, id uuid.UUID) (*V2Job, error) {
 	var job V2Job
 	var parent *uuid.UUID
@@ -187,6 +234,7 @@ func (s *Store) ListV2Children(ctx context.Context, parent uuid.UUID, status str
 }
 
 func (s *Store) V2ChildCounts(ctx context.Context, parent uuid.UUID) (completed, processing, queued, total int, err error) {
+	var all int
 	err = s.pool.QueryRow(ctx,
 		`SELECT
 		   count(*) FILTER (WHERE status = 'completed'),
@@ -194,8 +242,20 @@ func (s *Store) V2ChildCounts(ctx context.Context, parent uuid.UUID) (completed,
 		   count(*) FILTER (WHERE status = 'queued'),
 		   count(*)
 		 FROM jobs WHERE parent_id = $1`, parent,
-	).Scan(&completed, &processing, &queued, &total)
+	).Scan(&completed, &processing, &queued, &all)
+	if err != nil {
+		return
+	}
+	total = all
 	return
+}
+
+func (s *Store) ReopenV2Job(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE jobs
+		 SET status = 'queued', completed_at = NULL, error_msg = NULL, lease_expires_at = NULL, updated_at = now()
+		 WHERE id = $1 AND status IN ('completed', 'failed')`, id)
+	return err
 }
 
 func (s *Store) CancelV2Job(ctx context.Context, id uuid.UUID) (string, error) {

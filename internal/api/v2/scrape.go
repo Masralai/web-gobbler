@@ -102,7 +102,10 @@ func validateScrapeRequest(req *ScrapeRequest, demo bool) error {
 	if req.WaitFor < 0 || req.WaitFor > 60000 || req.WaitFor > req.Timeout/2 {
 		return fmt.Errorf("waitFor must be between 0 and 60000 and at most half of timeout")
 	}
-	if len(req.Formats) == 0 {
+	if req.Formats != nil && len(req.Formats) == 0 {
+		return fmt.Errorf("formats must not be empty")
+	}
+	if req.Formats == nil {
 		req.Formats = Formats{{Type: "markdown"}}
 	}
 	for _, f := range req.Formats {
@@ -122,10 +125,10 @@ func validateScrapeRequest(req *ScrapeRequest, demo bool) error {
 		}
 	}
 	if len(req.Actions) > 0 {
-		return fmt.Errorf("actions are not implemented")
+		return fmt.Errorf("actions are not configured")
 	}
 	if req.WaitFor > 0 {
-		return fmt.Errorf("waitFor is not implemented")
+		return fmt.Errorf("waitFor is not configured")
 	}
 	return nil
 }

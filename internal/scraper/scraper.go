@@ -257,17 +257,23 @@ func buildExtractSet(extractTypes []string) map[string]bool {
 }
 
 func extractLinks(doc *goquery.Document, baseURL *url.URL) []string {
+	seen := make(map[string]bool)
 	var links []string
-	doc.Find("a").Each(func(i int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if !exists {
-			return
-		}
-		linkURL, err := url.Parse(href)
+	doc.Find("a[href]").Each(func(_ int, s *goquery.Selection) {
+		href, _ := s.Attr("href")
+		linkURL, err := url.Parse(strings.TrimSpace(href))
 		if err != nil {
 			return
 		}
-		links = append(links, baseURL.ResolveReference(linkURL).String())
+		abs := baseURL.ResolveReference(linkURL)
+		if abs.Scheme != "http" && abs.Scheme != "https" {
+			return
+		}
+		u := abs.String()
+		if !seen[u] {
+			seen[u] = true
+			links = append(links, u)
+		}
 	})
 	return links
 }

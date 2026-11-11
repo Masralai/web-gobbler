@@ -3,9 +3,11 @@ package v2
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -18,13 +20,58 @@ import (
 const maxParseFile = 50 << 20
 
 func (h *Handler) HandleParse(c *gin.Context) {
-	if !strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
+	ct := c.GetHeader("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
 		writeBadRequest(c, "Missing file upload. Send multipart/form-data with a 'file' field and optional 'options' JSON string.")
 		return
 	}
 	if err := c.Request.ParseMultipartForm(maxParseFile); err != nil {
-		writeError(c, 400, CodeBadRequest, "Uploaded file exceeds maximum size of 50MB.")
+		writeBadRequest(c, "Uploaded file exceeds maximum size of 50MB.")
 		return
+	}
+	if vals := c.Request.MultipartForm.Value["url"]; len(vals) > 0 && strings.TrimSpace(vals[0]) != "" {
+		writeBadRequest(c, "url is not accepted for parse requests")
+		return
+	}
+	if optStr := c.PostForm("options"); strings.TrimSpace(optStr) != "" {
+		var opts struct {
+			Formats         Formats         `json:"formats,omitempty"`
+			OnlyMainContent *bool           `json:"onlyMainContent,omitempty"`
+			IncludeTags     []string        `json:"includeTags,omitempty"`
+			ExcludeTags     []string        `json:"excludeTags,omitempty"`
+			Timeout         int             `json:"timeout,omitempty"`
+			WaitFor         int             `json:"waitFor,omitempty"`
+			Headers         json.RawMessage `json:"headers,omitempty"`
+			Location        json.RawMessage `json:"location,omitempty"`
+			MaxAge          int             `json:"maxAge,omitempty"`
+			Origin          string          `json:"origin,omitempty"`
+			Integration     *string         `json:"integration,omitempty"`
+			Actions         []Action        `json:"actions,omitempty"`
+			Screenshot      json.RawMessage `json:"screenshot,omitempty"`
+			Branding        json.RawMessage `json:"branding,omitempty"`
+			ChangeTracking  json.RawMessage `json:"changeTracking,omitempty"`
+			Mobile          json.RawMessage `json:"mobile,omitempty"`
+			Proxy           json.RawMessage `json:"proxy,omitempty"`
+		}
+		if err := strictUnmarshal([]byte(optStr), &opts); err != nil {
+			writeBadRequest(c, "options must be a JSON object with supported parse fields")
+			return
+		}
+		if len(opts.Actions) > 0 || len(opts.Screenshot) > 0 || len(opts.Branding) > 0 || len(opts.ChangeTracking) > 0 || opts.WaitFor > 0 || len(opts.Location) > 0 || len(opts.Mobile) > 0 {
+			writeError(c, http.StatusBadRequest, CodeUnsupportedOptions, "parse does not support actions, screenshot, branding, changeTracking, waitFor > 0, location, or mobile")
+			return
+		}
+		if len(opts.Proxy) > 0 {
+			var s string
+			if err := json.Unmarshal(opts.Proxy, &s); err != nil {
+				writeError(c, http.StatusBadRequest, CodeUnsupportedOptions, "parse proxy must be auto or basic")
+				return
+			}
+			if s != "auto" && s != "basic" {
+				writeError(c, http.StatusBadRequest, CodeUnsupportedOptions, "parse proxy must be auto or basic")
+				return
+			}
+		}
 	}
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
@@ -61,13 +108,17 @@ func (h *Handler) HandleParse(c *gin.Context) {
 	case ".pdf":
 		markdown, err = pdfText(data)
 		if err != nil {
-			writeBadRequest(c, "failed to parse PDF")
+			msg := "Malformed PDF file."
+			if strings.Contains(strings.ToLower(err.Error()), "encrypt") || strings.Contains(strings.ToLower(err.Error()), "password") {
+				msg = "Encrypted PDFs are not supported."
+			}
+			writeBadRequest(c, msg)
 			return
 		}
 	case ".docx":
 		markdown, err = docxMarkdown(data)
 		if err != nil {
-			writeBadRequest(c, "failed to parse DOCX")
+			writeBadRequest(c, "Malformed DOCX file.")
 			return
 		}
 	case ".doc":
@@ -77,9 +128,13 @@ func (h *Handler) HandleParse(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, CodeUnsupportedFile, "Unsupported upload type. Supported file extensions: .pdf, .docx, .html, .htm, .md, .txt")
 		return
 	}
+	contentType := mime.TypeByExtension(ext)
+	if contentType == "" {
+		contentType = "text/plain"
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": Document{
 		Markdown: markdown,
-		Metadata: Metadata{SourceURL: "", URL: header.Filename, StatusCode: 200, ContentType: "text/plain"},
+		Metadata: Metadata{URL: header.Filename, StatusCode: 200, ContentType: contentType},
 	}})
 }
 

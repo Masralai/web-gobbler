@@ -214,11 +214,23 @@ type MapRequest struct {
 }
 
 type SearchRequest struct {
-	Query         string         `json:"query"`
-	Limit         int            `json:"limit,omitempty"`
-	Sources       []string       `json:"sources,omitempty"`
-	ScrapeOptions *ScrapeOptions `json:"scrapeOptions,omitempty"`
-	Timeout       int            `json:"timeout,omitempty"`
+	Query             string          `json:"query"`
+	Limit             int             `json:"limit,omitempty"`
+	Sources           []string        `json:"sources,omitempty"`
+	ScrapeOptions     *ScrapeOptions  `json:"scrapeOptions,omitempty"`
+	Timeout           int             `json:"timeout,omitempty"`
+	IncludeDomains    []string        `json:"includeDomains,omitempty"`
+	ExcludeDomains    []string        `json:"excludeDomains,omitempty"`
+	Lang              string          `json:"lang,omitempty"`
+	Country           string          `json:"country,omitempty"`
+	Location          json.RawMessage `json:"location,omitempty"`
+	Tbs               string          `json:"tbs,omitempty"`
+	Filter            json.RawMessage `json:"filter,omitempty"`
+	Safe              json.RawMessage `json:"safe,omitempty"`
+	Categories        []string        `json:"categories,omitempty"`
+	Enterprise        json.RawMessage `json:"enterprise,omitempty"`
+	IgnoreInvalidURLs json.RawMessage `json:"ignoreInvalidURLs,omitempty"`
+	AsyncScraping     json.RawMessage `json:"asyncScraping,omitempty"`
 }
 
 type ExtractRequest struct {

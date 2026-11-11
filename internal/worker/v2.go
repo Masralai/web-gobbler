@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	apiv2 "github.com/Masralai/web-gobbler/internal/api/v2"
@@ -224,34 +225,57 @@ func (w *V2Worker) processExtract(ctx context.Context, job *store.V2Job) error {
 	if !w.LLM || w.Extractor == nil {
 		return fmt.Errorf("extract is not configured")
 	}
-	out := make([]json.RawMessage, 0, len(req.URLs))
-	successes := 0
-	for _, rawURL := range req.URLs {
-		opts := apiv2.DefaultScrapeOptions()
-		if req.ScrapeOptions != nil {
-			opts = *req.ScrapeOptions
-		}
-		doc, err := w.scrape(ctx, apiv2.ScrapeRequest{URL: rawURL, ScrapeOptions: opts})
-		if err != nil {
-			out = append(out, json.RawMessage("null"))
-			continue
-		}
-		raw, err := w.Extractor.Extract(ctx, doc.Markdown, rawSchema(req.Schema), req.Prompt)
-		if err != nil {
-			out = append(out, json.RawMessage("null"))
-			continue
-		}
-		out = append(out, raw)
-		successes++
+	out := make([]json.RawMessage, len(req.URLs))
+	for i := range out {
+		out[i] = json.RawMessage("null")
 	}
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	successes := 0
+	for i, rawURL := range req.URLs {
+		i, rawURL := i, rawURL
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			opts := apiv2.DefaultScrapeOptions()
+			if req.ScrapeOptions != nil {
+				opts = *req.ScrapeOptions
+			}
+			doc, err := w.scrape(ctx, apiv2.ScrapeRequest{URL: rawURL, ScrapeOptions: opts})
+			if err != nil {
+				return
+			}
+			raw, err := w.Extractor.Extract(ctx, doc.Markdown, rawSchema(req.Schema), req.Prompt)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			out[i] = raw
+			successes++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
 	if successes == 0 {
 		return fmt.Errorf("all extract URLs failed")
 	}
-	raw, _ := json.Marshal(out)
-	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", raw, nil, nil, 0, int64Ptr(0)); err != nil {
+	var payload json.RawMessage
+	if len(req.URLs) == 1 {
+		payload = out[0]
+	} else {
+		payload = mustJSON(out)
+	}
+	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", payload, nil, nil, 0, int64Ptr(0)); err != nil {
 		return err
 	}
-	w.deliver(ctx, job, "extract.completed", raw)
+	w.deliver(ctx, job, "extract.completed", payload)
 	return nil
 }
 

@@ -27,6 +27,10 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 		writeBadRequest(c, err.Error())
 		return
 	}
+	if req.MaxConcurrency != 0 && req.MaxConcurrency < 1 {
+		writeBadRequest(c, "maxConcurrency must be a positive integer")
+		return
+	}
 	ignoreInvalid := true
 	if req.IgnoreInvalidURLs != nil {
 		ignoreInvalid = *req.IgnoreInvalidURLs
@@ -49,6 +53,7 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 	}
 
 	var parentID uuid.UUID
+	appending := false
 	if req.AppendToID != nil && *req.AppendToID != "" {
 		id, err := uuid.Parse(*req.AppendToID)
 		if err != nil {
@@ -61,6 +66,7 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 			return
 		}
 		parentID = id
+		appending = true
 	} else {
 		job := &store.V2Job{Kind: store.KindBatch, URL: valid[0], Request: mustJSON(req), Webhook: mustJSON(req.Webhook)}
 		id, err := h.Store.CreateV2Job(c.Request.Context(), job)
@@ -83,6 +89,9 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 			writeError(c, 500, CodeUnknown, "failed to queue batch")
 			return
 		}
+	}
+	if appending {
+		_ = h.Store.ReopenV2Job(c.Request.Context(), parentID)
 	}
 
 	resp := gin.H{"success": true, "id": parentID.String(), "url": h.baseURL(c) + "/v2/batch/scrape/" + parentID.String()}
