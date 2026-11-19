@@ -102,7 +102,10 @@ services:
       DEFAULT_MAX_RETRIES: "2"
       SCRAPER_RATE_LIMIT: "1"
       RENDER_JS_ENABLED: "1"
+      WORKER_CAPABILITY: browser
       LOG_LEVEL: INFO
+    shm_size: "2gb"
+    init: true
     depends_on:
       postgres:
         condition: service_healthy
