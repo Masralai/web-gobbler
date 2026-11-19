@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -144,8 +142,12 @@ func DefaultOptions() *ScrapeOptions {
 
 // ScrapePage fetches and extracts content for extractTypes.
 func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts *ScrapeOptions) (*Result, error) {
-	parsedURL, err := resolveAndCheckURL(ctx, rawURL)
-	if err != nil {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, rawURL)
+	}
+	// Accept-time public URL check (SEC-001). fetchHTTP performs dial-time pinning and redirect re-checks.
+	if _, _, err := resolvePublicTarget(ctx, rawURL); err != nil {
 		return nil, err
 	}
 	if opts == nil {
@@ -175,10 +177,18 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 		return &Result{HTTPStatus: httpStatus, ContentType: meta.contentType, FinalURL: meta.finalURL, DurationMs: time.Since(start).Milliseconds()}, err
 	}
 
+	// Prefer final URL for metadata resolution when available.
+	metaBase := parsedURL
+	if meta.finalURL != "" {
+		if u, err := url.Parse(meta.finalURL); err == nil {
+			metaBase = u
+		}
+	}
+
 	result := &Result{HTTPStatus: httpStatus, ContentType: meta.contentType, FinalURL: meta.finalURL}
 	extractSet := buildExtractSet(extractTypes)
 
-	metaInfo := extractPageMeta(doc, parsedURL)
+	metaInfo := extractPageMeta(doc, metaBase)
 	result.Title = metaInfo.Title
 	result.Description = metaInfo.Description
 	result.Language = metaInfo.Language
@@ -188,7 +198,7 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 	result.Favicon = metaInfo.Favicon
 
 	if extractSet["links"] || extractSet["all"] {
-		result.Links = extractLinks(doc, parsedURL)
+		result.Links = extractLinks(doc, metaBase)
 	}
 	if extractSet["headers"] || extractSet["all"] {
 		result.Headers = extractHeaders(doc)
@@ -221,59 +231,10 @@ func ScrapePage(ctx context.Context, rawURL string, extractTypes []string, opts 
 	return result, nil
 }
 
-func resolveAndCheckURL(ctx context.Context, rawURL string) (*url.URL, error) {
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, rawURL)
-	}
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidURL, err)
-	}
-	hostname := parsedURL.Hostname()
-	if os.Getenv("SCRAPER_ALLOW_PRIVATE_IPS") == "" {
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
-		if err != nil {
-			return nil, fmt.Errorf("dns lookup failed: %w", err)
-		}
-		for _, a := range ips {
-			if isPrivateIP(a.IP) {
-				return nil, fmt.Errorf("%w: %s resolves to %s", ErrPrivateIP, hostname, a.IP)
-			}
-		}
-	}
-	return parsedURL, nil
-}
-
 // ValidatePublicURL checks that a URL is fetchable and does not resolve to a private address.
-// ponytail: used at accept time for v2 crawl/batch/search/webhook targets.
 func ValidatePublicURL(ctx context.Context, rawURL string) error {
-	_, err := resolveAndCheckURL(ctx, rawURL)
+	_, _, err := resolvePublicTarget(ctx, rawURL)
 	return err
-}
-
-func newScrapeClient(opts *ScrapeOptions) *http.Client {
-	return &http.Client{
-		Timeout: opts.Timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if !opts.FollowRedirects {
-				return http.ErrUseLastResponse
-			}
-			if len(via) >= 5 {
-				return fmt.Errorf("%w: %d redirects", ErrTooManyRedirects, len(via))
-			}
-			redirectHost := req.URL.Hostname()
-			redirectIPs, err := net.LookupIP(redirectHost)
-			if err != nil {
-				return fmt.Errorf("redirect dns lookup failed: %w", err)
-			}
-			for _, ip := range redirectIPs {
-				if isPrivateIP(ip) {
-					return fmt.Errorf("%w: redirect to %s resolves to %s", ErrPrivateIP, redirectHost, ip)
-				}
-			}
-			return nil
-		},
-	}
 }
 
 func buildExtractSet(extractTypes []string) map[string]bool {
@@ -329,7 +290,6 @@ func extractParagraphs(doc *goquery.Document) []string {
 	})
 	return paragraphs
 }
-
 
 type pageMeta struct {
 	Title       string

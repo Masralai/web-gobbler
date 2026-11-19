@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const maxMarkdownChars = 100_000
@@ -174,5 +176,31 @@ func (c *Client) Extract(ctx context.Context, markdown string, schema json.RawMe
 	if !json.Valid([]byte(content)) {
 		return nil, fmt.Errorf("llm returned non-json")
 	}
-	return json.RawMessage(content), nil
+	out := json.RawMessage(content)
+	if len(schema) > 0 {
+		if err := validateAgainstSchema(schema, out); err != nil {
+			return nil, fmt.Errorf("extract output does not match schema")
+		}
+	}
+	return out, nil
+}
+
+func validateAgainstSchema(schema, value json.RawMessage) error {
+	var schemaDoc any
+	if err := json.Unmarshal(schema, &schemaDoc); err != nil {
+		return err
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource("schema.json", schemaDoc); err != nil {
+		return err
+	}
+	sch, err := c.Compile("schema.json")
+	if err != nil {
+		return err
+	}
+	var v any
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	return sch.Validate(v)
 }

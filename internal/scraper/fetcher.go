@@ -33,47 +33,89 @@ func (HTTPFetcher) Fetch(ctx context.Context, rawURL string, opts *ScrapeOptions
 }
 
 func fetchHTTP(ctx context.Context, rawURL string, opts *ScrapeOptions) ([]byte, int, httpMeta, error) {
-	client := newScrapeClient(opts)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, 0, httpMeta{}, fmt.Errorf("creating request: %w", err)
+	if opts == nil {
+		opts = DefaultOptions()
 	}
-	req.Header.Set("User-Agent", opts.UserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	for k, v := range opts.Headers {
-		if k == "" {
+	current := rawURL
+	redirects := 0
+	for {
+		parsed, pinned, err := resolvePublicTarget(ctx, current)
+		if err != nil {
+			return nil, 0, httpMeta{finalURL: current}, err
+		}
+		client := newPinnedHTTPClient(opts, pinned)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
+		if err != nil {
+			return nil, 0, httpMeta{finalURL: current}, fmt.Errorf("creating request: %w", err)
+		}
+		req.Header.Set("User-Agent", opts.UserAgent)
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+		for k, v := range opts.Headers {
+			if k == "" {
+				continue
+			}
+			req.Header.Set(k, v)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, 0, httpMeta{finalURL: current}, fmt.Errorf("%w: %w", ErrTimeout, err)
+			}
+			return nil, 0, httpMeta{finalURL: current}, fmt.Errorf("request failed: %w", err)
+		}
+
+		meta := httpMeta{finalURL: current, contentType: resp.Header.Get("Content-Type")}
+		if resp.Request != nil && resp.Request.URL != nil {
+			meta.finalURL = resp.Request.URL.String()
+		}
+
+		if isRedirectStatus(resp.StatusCode) {
+			loc := resp.Header.Get("Location")
+			resp.Body.Close()
+			if !opts.FollowRedirects {
+				return nil, resp.StatusCode, meta, fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
+			}
+			redirects++
+			if redirects > 5 {
+				return nil, resp.StatusCode, meta, fmt.Errorf("%w: %d redirects", ErrTooManyRedirects, redirects)
+			}
+			next, err := normalizeFinalURL(parsed, loc)
+			if err != nil {
+				return nil, resp.StatusCode, meta, fmt.Errorf("invalid redirect location: %w", err)
+			}
+			// Re-check and re-pin each redirect target (SEC-001).
+			current = next
 			continue
 		}
-		req.Header.Set(k, v)
-	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, 0, httpMeta{}, fmt.Errorf("%w: %w", ErrTimeout, err)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return nil, resp.StatusCode, meta, fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
 		}
-		return nil, 0, httpMeta{}, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
 
-	meta := httpMeta{finalURL: rawURL, contentType: resp.Header.Get("Content-Type")}
-	if resp.Request != nil && resp.Request.URL != nil {
-		meta.finalURL = resp.Request.URL.String()
+		var bodyReader io.Reader = resp.Body
+		if opts.MaxBodySize > 0 {
+			bodyReader = io.LimitReader(resp.Body, opts.MaxBodySize)
+		}
+		body, err := io.ReadAll(bodyReader)
+		resp.Body.Close()
+		if err != nil {
+			return nil, resp.StatusCode, meta, fmt.Errorf("%w: %w", ErrParseFailure, err)
+		}
+		return body, resp.StatusCode, meta, nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, meta, fmt.Errorf("%w: %d", ErrHTTPFailed, resp.StatusCode)
-	}
+}
 
-	var bodyReader io.Reader = resp.Body
-	if opts.MaxBodySize > 0 {
-		bodyReader = io.LimitReader(resp.Body, opts.MaxBodySize)
+func isRedirectStatus(code int) bool {
+	switch code {
+	case http.StatusMultipleChoices, http.StatusMovedPermanently, http.StatusFound,
+		http.StatusSeeOther, http.StatusNotModified, http.StatusUseProxy,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
 	}
-	body, err := io.ReadAll(bodyReader)
-	if err != nil {
-		return nil, resp.StatusCode, meta, fmt.Errorf("%w: %w", ErrParseFailure, err)
-	}
-	return body, resp.StatusCode, meta, nil
+	return false
 }
 
 // ErrBrowserUnavailable is returned when render_js is requested but Chrome is not available.
@@ -152,12 +194,16 @@ func (f *BrowserFetcher) Fetch(ctx context.Context, rawURL string, opts *ScrapeO
 	taskCtx, cancelTimeout := context.WithTimeout(taskCtx, timeout)
 	defer cancelTimeout()
 
-	var html string
-	err := chromedp.Run(taskCtx,
+	if err := chromedp.Do(taskCtx,
 		chromedp.Navigate(rawURL),
-		chromedp.WaitReady("body", chromedp.ByQuery),
-		chromedp.OuterHTML("html", &html, chromedp.ByQuery),
-	)
+		chromedp.WaitReady(chromedp.CSS("body")),
+	); err != nil {
+		if taskCtx.Err() != nil {
+			return nil, 0, fmt.Errorf("%w: %w", ErrTimeout, err)
+		}
+		return nil, 0, fmt.Errorf("browser navigate: %w", err)
+	}
+	html, err := chromedp.Run(taskCtx, chromedp.OuterHTML(chromedp.CSS("html")))
 	if err != nil {
 		if taskCtx.Err() != nil {
 			return nil, 0, fmt.Errorf("%w: %w", ErrTimeout, err)
