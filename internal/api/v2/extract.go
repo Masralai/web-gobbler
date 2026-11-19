@@ -3,6 +3,7 @@ package v2
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/Masralai/web-gobbler/internal/store"
 	"github.com/gin-gonic/gin"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func validatePublicURL(ctx context.Context, raw string) error {
@@ -71,14 +73,9 @@ func (h *Handler) HandleExtract(c *gin.Context) {
 		return
 	}
 	if req.Schema != nil {
-		if b, err := json.Marshal(req.Schema); err == nil {
-			var v any
-			if json.Unmarshal(b, &v) == nil {
-				if _, ok := v.(map[string]any); !ok {
-					writeBadRequest(c, "schema must be a JSON object")
-					return
-				}
-			}
+		if err := validateExtractSchema(req.Schema); err != nil {
+			writeBadRequest(c, err.Error())
+			return
 		}
 	}
 	if h.Config.DemoMode || !h.LLMEnabled || h.Extractor == nil {
@@ -167,3 +164,25 @@ func (h *Handler) HandleConcurrency(c *gin.Context) {
 }
 
 func (h *Handler) now() time.Time { return time.Now() }
+
+func validateExtractSchema(schema any) error {
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("schema must be a JSON object")
+	}
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return fmt.Errorf("schema must be a JSON object")
+	}
+	if _, ok := v.(map[string]any); !ok {
+		return fmt.Errorf("schema must be a JSON object")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource("schema.json", v); err != nil {
+		return fmt.Errorf("schema is invalid")
+	}
+	if _, err := c.Compile("schema.json"); err != nil {
+		return fmt.Errorf("schema is invalid")
+	}
+	return nil
+}

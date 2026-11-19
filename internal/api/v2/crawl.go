@@ -146,9 +146,14 @@ func (h *Handler) HandleCrawlStatus(c *gin.Context) {
 		body := gin.H{
 			"success": false, "status": "failed", "error": stringOr(job.ErrorMsg, "crawl failed"),
 			"completed": completed, "total": total, "creditsUsed": 0,
-			"expiresAt": h.expiresAt(job.CreatedAt), "createdAt": job.CreatedAt.UTC().Format(time.RFC3339),
-			"data": []Document{},
+			"expiresAt": h.expiresAt(job.CreatedAt), "data": []Document{},
 		}
+		if completed == 0 && total == 0 {
+			// REQ-002c: kickoff failure shape.
+			c.JSON(http.StatusOK, body)
+			return
+		}
+		body["createdAt"] = job.CreatedAt.UTC().Format(time.RFC3339)
 		if job.CompletedAt != nil {
 			body["completedAt"] = job.CompletedAt.UTC().Format(time.RFC3339)
 			if !job.CreatedAt.IsZero() {
@@ -200,7 +205,8 @@ func (h *Handler) HandleCrawlErrors(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := h.Store.GetV2Job(c.Request.Context(), id); err != nil {
+	job, err := h.Store.GetV2Job(c.Request.Context(), id)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Job not found"})
 		return
 	}
@@ -216,7 +222,16 @@ func (h *Handler) HandleCrawlErrors(c *gin.Context) {
 			URL: ch.URL, Error: stringOr(ch.ErrorMsg, "scrape failed"),
 		})
 	}
-	c.JSON(http.StatusOK, CrawlErrorsResponse{Errors: out, RobotsBlocked: []string{}})
+	robotsBlocked := []string{}
+	if len(job.Result) > 0 {
+		var res struct {
+			RobotsBlocked []string `json:"robotsBlocked"`
+		}
+		if json.Unmarshal(job.Result, &res) == nil && len(res.RobotsBlocked) > 0 {
+			robotsBlocked = res.RobotsBlocked
+		}
+	}
+	c.JSON(http.StatusOK, CrawlErrorsResponse{Errors: out, RobotsBlocked: robotsBlocked})
 }
 
 func (h *Handler) HandleOngoingCrawls(c *gin.Context) {
@@ -249,7 +264,7 @@ func (h *Handler) HandleOngoingCrawls(c *gin.Context) {
 }
 
 func (h *Handler) HandleCrawlPreview(c *gin.Context) {
-		writeError(c, http.StatusNotImplemented, "NOT_IMPLEMENTED", "crawl params preview is not available in this deployment")
+	writeError(c, http.StatusNotImplemented, "NOT_IMPLEMENTED", "crawl params preview is not available in this deployment")
 }
 
 func (h *Handler) HandleMap(c *gin.Context) {
@@ -307,14 +322,28 @@ func (h *Handler) HandleMap(c *gin.Context) {
 		defer cancel()
 	}
 	seed, _ := url.Parse(req.URL)
+	scope := crawl.Scope{
+		Seed:                  seed,
+		AllowSubdomains:       includeSubdomains || req.AllowSubdomains,
+		CrawlEntireDomain:     false,
+		AllowExternalLinks:    req.AllowExternalLinks,
+		IncludePaths:          req.IncludePaths,
+		ExcludePaths:          req.ExcludePaths,
+		RegexOnFullURL:        false,
+		IgnoreQueryParameters: ignoreQuery,
+	}
 	candidates := make([]string, 0)
 	seenCandidates := map[string]bool{}
 	addCandidate := func(raw string) {
-		if raw == "" || seenCandidates[raw] {
+		if raw == "" {
 			return
 		}
-		seenCandidates[raw] = true
-		candidates = append(candidates, raw)
+		norm, _, ok := crawl.NormalizeCrawlURL(raw, ignoreQuery)
+		if !ok || seenCandidates[norm] || !scope.Allowed(norm) {
+			return
+		}
+		seenCandidates[norm] = true
+		candidates = append(candidates, norm)
 	}
 	if req.Sitemap != "skip" {
 		sitemapURLs, _ := crawl.DiscoverSitemapURLs(ctx, req.URL, req.Sitemap, nil, *opts, req.Limit)
@@ -339,28 +368,15 @@ func (h *Handler) HandleMap(c *gin.Context) {
 		}
 	}
 	links := make([]map[string]any, 0, len(candidates))
-	for _, raw := range candidates {
-		u, err := url.Parse(raw)
-		if err != nil {
-			continue
-		}
-		if !mapHostAllowed(seed, u, includeSubdomains, req.AllowSubdomains, req.AllowExternalLinks) {
-			continue
-		}
-		target := raw
-		if ignoreQuery {
-			cu := *u
-			cu.RawQuery = ""
-			cu.Fragment = ""
-			target = cu.String()
-		}
-		if !pathAllowed(target, req.IncludePaths, req.ExcludePaths, false) {
-			continue
-		}
-		if req.Search != "" && !strings.Contains(strings.ToLower(target), strings.ToLower(req.Search)) {
-			continue
-		}
+	for _, target := range candidates {
 		item := map[string]any{"url": target}
+		if req.Search != "" {
+			q := strings.ToLower(req.Search)
+			title, _ := item["title"].(string)
+			if !strings.Contains(strings.ToLower(target), q) && !strings.Contains(strings.ToLower(title), q) {
+				continue
+			}
+		}
 		links = append(links, item)
 		if len(links) >= req.Limit {
 			break
@@ -442,7 +458,22 @@ func crawlPath(c *gin.Context) string {
 }
 
 func crawlWarning(job *store.V2Job, completed int) string {
-	if job == nil || job.Kind != store.KindCrawl || job.Status != "completed" || completed > 1 {
+	if job == nil || job.Kind != store.KindCrawl || job.Status != "completed" {
+		return ""
+	}
+	robotsBlockedCount := 0
+	if len(job.Result) > 0 {
+		var res struct {
+			RobotsBlocked []string `json:"robotsBlocked"`
+		}
+		if json.Unmarshal(job.Result, &res) == nil {
+			robotsBlockedCount = len(res.RobotsBlocked)
+		}
+	}
+	if robotsBlockedCount > 0 {
+		return fmt.Sprintf("%d page(s) were blocked by robots.txt. If you expected those pages, try ignoreRobotsTxt: true.", robotsBlockedCount)
+	}
+	if completed > 1 {
 		return ""
 	}
 	var req CrawlRequest
@@ -493,43 +524,4 @@ func validatePathPatterns(include, exclude []string) error {
 		return fmt.Errorf("includePaths and excludePaths together may contain at most 100000 characters")
 	}
 	return nil
-}
-
-func pathAllowed(raw string, include, exclude []string, regexOnFullURL bool) bool {
-	target := raw
-	if u, err := url.Parse(raw); err == nil && !regexOnFullURL {
-		target = u.Path
-	}
-	for _, p := range exclude {
-		if re, err := regexp.Compile(p); err == nil && re.MatchString(target) {
-			return false
-		}
-	}
-	if len(include) == 0 {
-		return true
-	}
-	for _, p := range include {
-		if re, err := regexp.Compile(p); err == nil && re.MatchString(target) {
-			return true
-		}
-	}
-	return false
-}
-
-func mapHostAllowed(seed, u *url.URL, includeSubdomains, allowSubdomains, allowExternal bool) bool {
-	if seed == nil || u == nil {
-		return false
-	}
-	if strings.EqualFold(seed.Hostname(), u.Hostname()) {
-		return true
-	}
-	if allowExternal {
-		return true
-	}
-	if includeSubdomains || allowSubdomains {
-		sh := strings.ToLower(seed.Hostname())
-		uh := strings.ToLower(u.Hostname())
-		return strings.HasSuffix(uh, "."+sh)
-	}
-	return false
 }

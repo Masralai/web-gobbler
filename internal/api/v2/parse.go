@@ -3,6 +3,7 @@ package v2
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/gin-gonic/gin"
 	"github.com/ledongthuc/pdf"
+	pdfcpuapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	pdfcpumodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 const maxParseFile = 50 << 20
@@ -108,6 +111,10 @@ func (h *Handler) HandleParse(c *gin.Context) {
 			return
 		}
 	case ".pdf":
+		if err := validatePDF(c.Request.Context(), data); err != nil {
+			writeBadRequest(c, err.Error())
+			return
+		}
 		markdown, err = pdfText(data)
 		if err != nil {
 			msg := "Malformed PDF file."
@@ -138,6 +145,19 @@ func (h *Handler) HandleParse(c *gin.Context) {
 		Markdown: markdown,
 		Metadata: Metadata{URL: header.Filename, SourceURL: header.Filename, StatusCode: 200, ContentType: contentType},
 	}})
+}
+
+func validatePDF(ctx context.Context, data []byte) error {
+	conf := pdfcpumodel.NewDefaultConfiguration()
+	// no password field in v2 parse schema; encrypted PDFs are rejected.
+	if err := pdfcpuapi.Validate(ctx, bytes.NewReader(data), conf, nil); err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "encrypt") || strings.Contains(msg, "password") || strings.Contains(msg, "encrypted") || strings.Contains(msg, "decrypt") {
+			return fmt.Errorf("Encrypted PDFs are not supported.")
+		}
+		return fmt.Errorf("Malformed PDF file.")
+	}
+	return nil
 }
 
 func pdfText(data []byte) (string, error) {

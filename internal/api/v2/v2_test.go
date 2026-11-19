@@ -99,3 +99,15 @@ func TestUnsupportedSearchField(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestValidateExtractSchema(t *testing.T) {
+	if err := validateExtractSchema(map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}}}); err != nil {
+		t.Fatalf("expected valid schema, got %v", err)
+	}
+	if err := validateExtractSchema("not-object"); err == nil {
+		t.Fatal("expected non-object schema error")
+	}
+	if err := validateExtractSchema(map[string]any{"type": 123}); err == nil {
+		t.Fatal("expected invalid schema error")
+	}
+}

@@ -66,29 +66,33 @@ func (h *Handler) HandleSearch(c *gin.Context) {
 		return
 	}
 	if name := unsupportedSearchField(req); name != "" {
-	writeBadRequest(c, name+" is not implemented")
-	return
+		writeBadRequest(c, name+" is not implemented")
+		return
 	}
 	if len(req.Query) < 1 || len(req.Query) > 400 {
-	writeBadRequest(c, "query must be between 1 and 400 characters")
-	return
+		writeBadRequest(c, "query must be between 1 and 400 characters")
+		return
 	}
 	if req.Limit == 0 {
-	req.Limit = 10
+		req.Limit = 10
 	}
 	if req.Limit < 1 || req.Limit > 100 {
-	writeBadRequest(c, "limit must be between 1 and 100")
-	return
+		writeBadRequest(c, "limit must be between 1 and 100")
+		return
 	}
 	if len(req.Sources) > 0 {
-	for _, s := range req.Sources {
-		if s != "web" {
-			writeBadRequest(c, "only the web source is supported")
-			return
+		for _, s := range req.Sources {
+			if s != "web" {
+				writeBadRequest(c, "only the web source is supported")
+				return
+			}
 		}
 	}
-	}
 	if req.ScrapeOptions != nil {
+		if len(req.ScrapeOptions.Formats) == 0 {
+			writeBadRequest(c, "search scrapeOptions.formats must not be empty")
+			return
+		}
 		for _, f := range req.ScrapeOptions.Formats {
 			switch f.Type {
 			case "markdown", "html", "rawHtml", "links":
@@ -96,6 +100,14 @@ func (h *Handler) HandleSearch(c *gin.Context) {
 				writeBadRequest(c, "search scrapeOptions formats may contain only markdown, html, rawHtml, and links")
 				return
 			}
+		}
+		if req.ScrapeOptions.WaitFor != 0 || len(req.ScrapeOptions.Actions) > 0 {
+			writeBadRequest(c, "search scrapeOptions do not support browser actions or waitFor")
+			return
+		}
+		if req.ScrapeOptions.Timeout < 0 || req.ScrapeOptions.Timeout > 120000 {
+			writeBadRequest(c, "scrapeOptions.timeout must be between 0 and 120000 milliseconds")
+			return
 		}
 	}
 	if req.Timeout < 0 {
@@ -128,11 +140,18 @@ func (h *Handler) HandleSearch(c *gin.Context) {
 		if req.ScrapeOptions != nil {
 			doc, err := h.scrape(ctx, ScrapeRequest{URL: r.URL, ScrapeOptions: *req.ScrapeOptions})
 			if err == nil {
-				item.Markdown = doc.Markdown
-				item.HTML = doc.HTML
-				item.RawHTML = doc.RawHTML
-				item.Links = doc.Links
-				item.JSON = doc.JSON
+				for _, f := range req.ScrapeOptions.Formats {
+					switch f.Type {
+					case "markdown":
+						item.Markdown = doc.Markdown
+					case "html":
+						item.HTML = doc.HTML
+					case "rawHtml":
+						item.RawHTML = doc.RawHTML
+					case "links":
+						item.Links = doc.Links
+					}
+				}
 			}
 		}
 		out = append(out, item)
@@ -227,7 +246,6 @@ func (h *Handler) search(ctx context.Context, query string, limit int) ([]struct
 	}
 	return out, nil
 }
-
 
 func newUUIDv7() string {
 	var b [16]byte

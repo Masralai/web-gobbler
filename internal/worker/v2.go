@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -229,63 +229,32 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 	if err != nil {
 		return err
 	}
-	includeSubdomains := req.AllowSubdomains
 	ignoreQuery := true
 	if req.IgnoreQueryParameters != nil {
 		ignoreQuery = *req.IgnoreQueryParameters
 	}
-	sameScope := func(u *url.URL) bool {
-		if u == nil || seedURL == nil {
-			return false
-		}
-		if strings.EqualFold(u.Hostname(), seedURL.Hostname()) {
-			return true
-		}
-		if req.AllowExternalLinks || req.CrawlEntireDomain && req.AllowExternalLinks {
-			return true
-		}
-		if includeSubdomains || req.CrawlEntireDomain {
-			sh := strings.ToLower(seedURL.Hostname())
-			uh := strings.ToLower(u.Hostname())
-			return strings.HasSuffix(uh, "."+sh)
-		}
-		return false
+	scope := crawl.Scope{
+		Seed:                  seedURL,
+		AllowSubdomains:       req.AllowSubdomains,
+		CrawlEntireDomain:     req.CrawlEntireDomain,
+		AllowExternalLinks:    req.AllowExternalLinks,
+		IncludePaths:          req.IncludePaths,
+		ExcludePaths:          req.ExcludePaths,
+		RegexOnFullURL:        req.RegexOnFullURL != nil && *req.RegexOnFullURL,
+		IgnoreQueryParameters: ignoreQuery,
 	}
-	pathAllowedCrawl := func(raw string) bool {
-		target := raw
-		regexOnFull := req.RegexOnFullURL != nil && *req.RegexOnFullURL
-		if u, err := url.Parse(raw); err == nil && !regexOnFull {
-			target = u.Path
-		}
-		for _, p := range req.ExcludePaths {
-			if re, err := regexp.Compile(p); err == nil && re.MatchString(target) {
-				return false
-			}
-		}
-		if len(req.IncludePaths) == 0 {
+
+	robots, _ := crawl.FetchRobots(ctx, seedNorm, *opts)
+	robotsBlocked := map[string]bool{}
+	allowedByRobots := func(raw string) bool {
+		if req.IgnoreRobotsTxt || robots == nil {
 			return true
 		}
-		for _, p := range req.IncludePaths {
-			if re, err := regexp.Compile(p); err == nil && re.MatchString(target) {
-				return true
-			}
+		if robots.Allowed(raw) {
+			return true
 		}
+		robotsBlocked[raw] = true
 		return false
-	}
-	normalize := func(raw string) (string, *url.URL, bool) {
-		norm, err := crawl.NormalizeURL(raw)
-		if err != nil {
-			return "", nil, false
-		}
-		u, err := url.Parse(norm)
-		if err != nil {
-			return "", nil, false
-		}
-		if ignoreQuery {
-			u.RawQuery = ""
-			norm = u.String()
-		}
-		return norm, u, true
 	}
 
 	type frontierItem struct {
@@ -298,17 +267,30 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 		if depth < 0 || depth > maxDepth {
 			return
 		}
-		norm, u, ok := normalize(raw)
+		norm, _, ok := crawl.NormalizeCrawlURL(raw, ignoreQuery)
 		if !ok || seen[norm] {
 			return
 		}
-		if !sameScope(u) || !pathAllowedCrawl(norm) {
+		if !scope.Allowed(norm) || !allowedByRobots(norm) {
 			return
 		}
 		seen[norm] = true
 		queue = append(queue, frontierItem{URL: norm, Depth: depth})
 	}
-	enqueue(seedNorm, 0)
+	sitemapMode := strings.ToLower(strings.TrimSpace(req.Sitemap))
+	if sitemapMode == "" {
+		sitemapMode = "include"
+	}
+	if sitemapMode == "include" || sitemapMode == "only" {
+		if smURLs, err := crawl.DiscoverSitemapURLs(ctx, seedNorm, sitemapMode, robots, *opts, limit); err == nil {
+			for _, u := range smURLs {
+				enqueue(u, 0)
+			}
+		}
+	}
+	if sitemapMode != "only" {
+		enqueue(seedNorm, 0)
+	}
 
 	pagesProcessed := 0
 	docs := make([]apiv2.Document, 0)
@@ -319,13 +301,36 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 		item := queue[0]
 		queue = queue[1:]
 
-		page, err := scraper.ScrapePage(ctx, item.URL, extractTypes, opts)
-		pr := scraper.PageResult{URL: item.URL, Depth: item.Depth}
-		if err != nil {
+		var (
+			page        *scraper.Result
+			err         error
+			attempts    int
+			retriesUsed int
+		)
+		for attempt := 1; attempt <= 6; attempt++ {
+			attempts = attempt
+			page, err = scraper.ScrapePage(ctx, item.URL, extractTypes, opts)
+			statusCode := 0
 			if page != nil {
-				pr.HTTPStatus = page.HTTPStatus
+				statusCode = page.HTTPStatus
 			}
-		} else {
+			if err == nil && statusCode >= 200 && statusCode < 300 {
+				break
+			}
+			retryable := crawlPageRetryable(statusCode, err)
+			if !retryable || attempt == 6 || cancelled() {
+				break
+			}
+			retriesUsed = attempt
+			timer := time.NewTimer(time.Duration(attempt) * 200 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
+		pr := scraper.PageResult{URL: item.URL, Depth: item.Depth}
+		if page != nil {
 			pr.Links = page.Links
 			pr.Headers = page.Headers
 			pr.Paragraphs = page.Paragraphs
@@ -334,6 +339,16 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 			pr.RawHTML = page.RawHTML
 			pr.HTTPStatus = page.HTTPStatus
 			pr.Truncated = page.Truncated
+			pr.Title = page.Title
+			pr.Description = page.Description
+			pr.Language = page.Language
+			pr.Keywords = page.Keywords
+			pr.RobotsMeta = page.RobotsMeta
+			pr.OgImage = page.OgImage
+			pr.Favicon = page.Favicon
+		}
+		if attempts > 1 && retriesUsed < attempts-1 {
+			retriesUsed = attempts - 1
 		}
 		if cancelled() {
 			return nil
@@ -347,15 +362,17 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 		}
 		status := "completed"
 		var errMsg *string
-		if pr.HTTPStatus == 0 {
+		if pr.HTTPStatus < 200 || pr.HTTPStatus >= 300 {
 			status = "failed"
 			msg := "scrape failed"
 			if err != nil {
 				msg = err.Error()
+			} else if pr.HTTPStatus != 0 {
+				msg = fmt.Sprintf("scrape failed with status %d", pr.HTTPStatus)
 			}
 			errMsg = &msg
 		}
-		if uErr := w.Store.UpdateV2Job(ctx, child, status, raw, errMsg, &pr.HTTPStatus, 0, int64Ptr(0)); uErr != nil {
+		if uErr := w.Store.UpdateV2Job(ctx, child, status, raw, errMsg, &pr.HTTPStatus, retriesUsed, int64Ptr(0)); uErr != nil {
 			return uErr
 		}
 		pagesProcessed++
@@ -381,7 +398,16 @@ func (w *V2Worker) processCrawl(ctx context.Context, job *store.V2Job) error {
 	if cancelled() {
 		return nil
 	}
-	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", mustJSON(map[string]any{"pages_crawled": pagesProcessed}), nil, nil, 0, int64Ptr(time.Since(start).Milliseconds())); err != nil {
+	completedPayload := map[string]any{"pages_crawled": pagesProcessed}
+	if len(robotsBlocked) > 0 {
+		rb := make([]string, 0, len(robotsBlocked))
+		for u := range robotsBlocked {
+			rb = append(rb, u)
+		}
+		sort.Strings(rb)
+		completedPayload["robotsBlocked"] = rb
+	}
+	if err := w.Store.UpdateV2Job(ctx, job.ID, "completed", mustJSON(completedPayload), nil, nil, 0, int64Ptr(time.Since(start).Milliseconds())); err != nil {
 		return err
 	}
 	w.deliver(ctx, job, "crawl.completed", map[string]any{"success": true, "data": docs})
@@ -545,7 +571,11 @@ func (w *V2Worker) scrape(ctx context.Context, req apiv2.ScrapeRequest) (apiv2.D
 	}
 	return apiv2.Document{
 		Markdown: res.Markdown, HTML: res.HTML, RawHTML: res.RawHTML, Links: res.Links,
-		Metadata: apiv2.Metadata{SourceURL: req.URL, URL: finalURL, StatusCode: res.HTTPStatus, ContentType: res.ContentType},
+		Metadata: apiv2.Metadata{
+			SourceURL: req.URL, URL: finalURL, StatusCode: res.HTTPStatus, ContentType: res.ContentType,
+			Title: res.Title, Description: res.Description, Language: res.Language,
+			Keywords: res.Keywords, Robots: res.RobotsMeta, OgImage: res.OgImage, Favicon: res.Favicon,
+		},
 	}, nil
 }
 
@@ -587,7 +617,11 @@ func extractTypesFor(formats apiv2.Formats) []string {
 func docFromPage(page scraper.PageResult, opts *apiv2.ScrapeOptions) apiv2.Document {
 	return apiv2.Document{
 		Markdown: page.Markdown, HTML: page.HTML, RawHTML: page.RawHTML, Links: page.Links,
-		Metadata: apiv2.Metadata{URL: page.URL, SourceURL: page.URL, StatusCode: page.HTTPStatus},
+		Metadata: apiv2.Metadata{
+			URL: page.URL, SourceURL: page.URL, StatusCode: page.HTTPStatus,
+			Title: page.Title, Description: page.Description, Language: page.Language,
+			Keywords: page.Keywords, Robots: page.RobotsMeta, OgImage: page.OgImage, Favicon: page.Favicon,
+		},
 	}
 }
 
@@ -688,3 +722,23 @@ func mustJSON(v any) json.RawMessage {
 }
 
 func int64Ptr(n int64) *int64 { return &n }
+
+func crawlPageRetryable(status int, err error) bool {
+	if status == 429 || status >= 500 {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "timed out") ||
+		strings.Contains(msg, "temporar") ||
+		strings.Contains(msg, "connection") ||
+		strings.Contains(msg, "reset") ||
+		strings.Contains(msg, "refused") ||
+		strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "dns") ||
+		strings.Contains(msg, "request failed") ||
+		strings.Contains(msg, "context deadline")
+}

@@ -133,6 +133,11 @@ func validateScrapeRequest(req *ScrapeRequest, demo, browserAvailable bool) erro
 			if !req.jsonAllowed() {
 				return fmt.Errorf("json format requires prompt or schema")
 			}
+			if f.Schema != nil {
+				if err := validateExtractSchema(f.Schema); err != nil {
+					return fmt.Errorf("json format schema is invalid")
+				}
+			}
 		default:
 			return fmt.Errorf("unsupported format %q", f.Type)
 		}
@@ -260,6 +265,13 @@ func (h *Handler) scrape(ctx context.Context, req ScrapeRequest) (Document, erro
 			URL:         finalURL,
 			StatusCode:  res.HTTPStatus,
 			ContentType: res.ContentType,
+			Title:       res.Title,
+			Description: res.Description,
+			Language:    res.Language,
+			Keywords:    res.Keywords,
+			Robots:      res.RobotsMeta,
+			OgImage:     res.OgImage,
+			Favicon:     res.Favicon,
 		},
 	}
 	for _, f := range req.Formats {
