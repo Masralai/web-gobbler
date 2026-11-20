@@ -440,6 +440,7 @@ func main() {
 		Store: db, Queue: q,
 		WebhookSecret:    firstEnv("WEBHOOK_SECRET", "SELF_HOSTED_WEBHOOK_HMAC_SECRET"),
 		RetentionMinutes: getEnvInt("JOB_RETENTION_MINUTES", 1440),
+		MaxConcurrent:    getEnvInt("MAX_CONCURRENT_JOBS", 5),
 	}
 	if llmCfg := extract.FromEnv(); llmCfg.Enabled() {
 		v2w.Extractor = extract.NewClient(llmCfg, nil)
