@@ -74,9 +74,14 @@ func (s *Store) CreateV2Job(ctx context.Context, job *V2Job) (uuid.UUID, error) 
 	return id, nil
 }
 
-func (s *Store) CreateV2JobWithIdempotency(ctx context.Context, job *V2Job, key string) (uuid.UUID, bool, error) {
+type OutboxEntry struct {
+	Stream  string
+	Payload json.RawMessage
+}
+
+func (s *Store) CreateV2JobWithIdempotency(ctx context.Context, job *V2Job, key string, outbox ...OutboxEntry) (uuid.UUID, bool, error) {
 	if key == "" {
-		id, err := s.CreateV2Job(ctx, job)
+		id, err := s.CreateV2JobQueued(ctx, job, outbox...)
 		return id, false, err
 	}
 	kind := job.Kind
@@ -87,7 +92,10 @@ func (s *Store) CreateV2JobWithIdempotency(ctx context.Context, job *V2Job, key 
 	if status == "" {
 		status = "queued"
 	}
-	id := uuid.New()
+	id := job.ID
+	if id == uuid.Nil {
+		id = uuid.New()
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, false, err
@@ -112,6 +120,11 @@ func (s *Store) CreateV2JobWithIdempotency(ctx context.Context, job *V2Job, key 
 	).Scan(&job.CreatedAt, &job.UpdatedAt); err != nil {
 		return uuid.Nil, false, fmt.Errorf("insert v2 job: %w", err)
 	}
+	for _, o := range outbox {
+		if err := insertOutboxTx(ctx, tx, o.Stream, o.Payload); err != nil {
+			return uuid.Nil, false, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, false, err
 	}
@@ -119,6 +132,95 @@ func (s *Store) CreateV2JobWithIdempotency(ctx context.Context, job *V2Job, key 
 	job.Kind = kind
 	job.Status = status
 	return id, false, nil
+}
+
+func (s *Store) CreateV2JobQueued(ctx context.Context, job *V2Job, outbox ...OutboxEntry) (uuid.UUID, error) {
+	kind := job.Kind
+	if kind == "" {
+		kind = KindScrape
+	}
+	status := job.Status
+	if status == "" {
+		status = "queued"
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+	var id uuid.UUID
+	if job.ID != uuid.Nil {
+		id = job.ID
+		err = tx.QueryRow(ctx,
+			`INSERT INTO jobs (id, url, extract, options, status, kind, parent_id, request, webhook, depth)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			 RETURNING created_at, updated_at`,
+			id, job.URL, []string{}, nil, status, kind, job.ParentID, rawOrNil(job.Request), rawOrNil(job.Webhook), nullInt(job.Depth),
+		).Scan(&job.CreatedAt, &job.UpdatedAt)
+	} else {
+		err = tx.QueryRow(ctx,
+			`INSERT INTO jobs (url, extract, options, status, kind, parent_id, request, webhook, depth)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			 RETURNING id, created_at, updated_at`,
+			job.URL, []string{}, nil, status, kind, job.ParentID, rawOrNil(job.Request), rawOrNil(job.Webhook), nullInt(job.Depth),
+		).Scan(&id, &job.CreatedAt, &job.UpdatedAt)
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("insert v2 job: %w", err)
+	}
+	for _, o := range outbox {
+		if err := insertOutboxTx(ctx, tx, o.Stream, o.Payload); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	job.ID = id
+	job.Kind = kind
+	job.Status = status
+	return id, nil
+}
+
+func insertOutboxTx(ctx context.Context, tx pgx.Tx, stream string, payload json.RawMessage) error {
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO outbox (stream, payload) VALUES ($1, $2::jsonb)`, stream, []byte(payload))
+	return err
+}
+
+type OutboxRow struct {
+	ID      int64
+	Stream  string
+	Payload json.RawMessage
+}
+
+func (s *Store) ListUnsentOutbox(ctx context.Context, limit int) ([]OutboxRow, error) {
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, stream, payload::TEXT FROM outbox WHERE sent_at IS NULL ORDER BY id LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OutboxRow
+	for rows.Next() {
+		var r OutboxRow
+		var p string
+		if err := rows.Scan(&r.ID, &r.Stream, &p); err != nil {
+			return nil, err
+		}
+		r.Payload = json.RawMessage(p)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MarkOutboxSent(ctx context.Context, id int64) error {
+	_, err := s.pool.Exec(ctx, `UPDATE outbox SET sent_at = now() WHERE id = $1`, id)
+	return err
 }
 
 func (s *Store) GetV2Job(ctx context.Context, id uuid.UUID) (*V2Job, error) {
@@ -161,6 +263,18 @@ func (s *Store) CreateV2Child(ctx context.Context, parent uuid.UUID, rawURL stri
 		Request:  request,
 	}
 	return s.CreateV2Job(ctx, job)
+}
+
+func (s *Store) CreateV2ChildQueued(ctx context.Context, parent, id uuid.UUID, rawURL string, depth int, request json.RawMessage, outbox OutboxEntry) (uuid.UUID, error) {
+	job := &V2Job{
+		ID:       id,
+		Kind:     KindPage,
+		URL:      rawURL,
+		ParentID: &parent,
+		Depth:    depth,
+		Request:  request,
+	}
+	return s.CreateV2JobQueued(ctx, job, outbox)
 }
 
 func (s *Store) SetV2Processing(ctx context.Context, id uuid.UUID) (bool, error) {
@@ -240,8 +354,7 @@ func (s *Store) ListV2Children(ctx context.Context, parent uuid.UUID, status str
 	return out, rows.Err()
 }
 
-func (s *Store) V2ChildCounts(ctx context.Context, parent uuid.UUID) (completed, processing, queued, total int, err error) {
-	var all int
+func (s *Store) V2ChildCounts(ctx context.Context, parent uuid.UUID) (completed, processing, queued, all int, err error) {
 	err = s.pool.QueryRow(ctx,
 		`SELECT
 		   count(*) FILTER (WHERE status = 'completed'),
@@ -250,10 +363,6 @@ func (s *Store) V2ChildCounts(ctx context.Context, parent uuid.UUID) (completed,
 		   count(*)
 		 FROM jobs WHERE parent_id = $1`, parent,
 	).Scan(&completed, &processing, &queued, &all)
-	if err != nil {
-		return
-	}
-	total = all
 	return
 }
 

@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/Masralai/web-gobbler/internal/queue"
@@ -26,6 +27,10 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 	}
 	if err := validateWebhook(req.Webhook); err != nil {
 		writeBadRequest(c, err.Error())
+		return
+	}
+	if err := validateScrapeOptions(req.ScrapeOptions, h.Config.DemoMode, h.LLMEnabled && h.Extractor != nil, scraper.BrowserAvailable()); err != nil {
+		writeScrapeValidationError(c, err)
 		return
 	}
 	if req.MaxConcurrency != 0 && req.MaxConcurrency < 1 {
@@ -70,8 +75,12 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 			return
 		}
 		job, err := h.Store.GetV2Job(c.Request.Context(), id)
-		if err != nil || job.Kind != store.KindBatch || job.Status == "cancelled" || job.Status == "failed" {
-			writeBadRequest(c, "appendToId must reference an active batch")
+		if err != nil || job.Kind != store.KindBatch {
+			writeBadRequest(c, "appendToId must reference a batch job")
+			return
+		}
+		if job.Status == "cancelled" || job.Status == "failed" {
+			writeBadRequest(c, "appendToId must reference a batch job that is not cancelled or failed")
 			return
 		}
 		parentID = id
@@ -88,7 +97,9 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 
 	createdChildren := make([]uuid.UUID, 0, len(valid))
 	for _, raw := range valid {
-		childID, err := h.Store.CreateV2Child(c.Request.Context(), parentID, raw, 0, mustJSON(req))
+		childTmp := uuid.New()
+		obPayload, _ := json.Marshal(queue.StreamPayload{JobID: childTmp.String(), Kind: store.KindPage, ParentID: parentID.String(), URL: raw})
+		childID, err := h.Store.CreateV2ChildQueued(c.Request.Context(), parentID, childTmp, raw, 0, mustJSON(req), store.OutboxEntry{Stream: queue.StreamDefault, Payload: obPayload})
 		if err != nil {
 			msg := "failed to create batch children"
 			for _, cid := range createdChildren {
@@ -101,20 +112,8 @@ func (h *Handler) HandleBatch(c *gin.Context) {
 			return
 		}
 		createdChildren = append(createdChildren, childID)
-		if err := h.Queue.PublishStream(c.Request.Context(), queue.StreamDefault, queue.StreamPayload{
-			JobID: childID.String(), Kind: store.KindPage, ParentID: parentID.String(), URL: raw,
-		}); err != nil {
-			msg := "failed to queue batch"
-			for _, cid := range createdChildren {
-				_ = h.Store.UpdateV2Job(c.Request.Context(), cid, "failed", nil, &msg, nil, 0, nil)
-			}
-			if !appending {
-				_ = h.Store.UpdateV2Job(c.Request.Context(), parentID, "failed", nil, &msg, nil, 0, nil)
-			}
-			writeError(c, 500, CodeUnknown, msg)
-			return
-		}
 	}
+	_ = h.dispatchOutbox(c.Request.Context())
 	if appending {
 		_ = h.Store.ReopenV2Job(c.Request.Context(), parentID)
 	}

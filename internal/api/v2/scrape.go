@@ -22,7 +22,7 @@ func (h *Handler) HandleScrape(c *gin.Context) {
 		writeDecodeError(c, err)
 		return
 	}
-	if err := validateScrapeRequest(&req, h.Config.DemoMode, scraper.BrowserAvailable()); err != nil {
+	if err := validateScrapeRequest(&req, h.Config.DemoMode, h.LLMEnabled && h.Extractor != nil, scraper.BrowserAvailable()); err != nil {
 		var se scrapeValidationError
 		if errors.As(err, &se) {
 			if se.code == "" {
@@ -91,7 +91,7 @@ func (h *Handler) HandleScrapeStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": doc})
 }
 
-func validateScrapeRequest(req *ScrapeRequest, demo, browserAvailable bool) error {
+func validateScrapeRequest(req *ScrapeRequest, demo, llmEnabled, browserAvailable bool) error {
 	if strings.TrimSpace(req.URL) == "" {
 		return fmt.Errorf("url is required")
 	}
@@ -127,7 +127,7 @@ func validateScrapeRequest(req *ScrapeRequest, demo, browserAvailable bool) erro
 				return fmt.Errorf("screenshot viewport must be between 1x1 and 7680x4320")
 			}
 		case "json":
-			if demo {
+			if demo || !llmEnabled {
 				return scrapeValidationError{status: http.StatusNotImplemented, code: CodeProviderUnavailable, msg: "extract is not configured"}
 			}
 			if !req.jsonAllowed() {
@@ -162,6 +162,31 @@ type scrapeValidationError struct {
 }
 
 func (e scrapeValidationError) Error() string { return e.msg }
+
+func validateScrapeOptions(opts *ScrapeOptions, demo, llmEnabled, browserAvailable bool) error {
+	if opts == nil {
+		return nil
+	}
+	tmp := ScrapeRequest{URL: "https://example.com", ScrapeOptions: *opts}
+	if err := validateScrapeRequest(&tmp, demo, llmEnabled, browserAvailable); err != nil {
+		return err
+	}
+	*opts = tmp.ScrapeOptions
+	return nil
+}
+
+func writeScrapeValidationError(c *gin.Context, err error) {
+	var se scrapeValidationError
+	if errors.As(err, &se) {
+		if se.code == "" {
+			c.AbortWithStatusJSON(se.status, gin.H{"success": false, "error": se.msg})
+			return
+		}
+		writeError(c, se.status, se.code, se.msg)
+		return
+	}
+	writeBadRequest(c, err.Error())
+}
 
 func validateActions(actions []Action, waitFor int) error {
 	if len(actions) > 50 {

@@ -11,6 +11,7 @@ import (
 	"github.com/Masralai/web-gobbler/internal/scraper"
 	"github.com/Masralai/web-gobbler/internal/store"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -78,24 +79,23 @@ func (h *Handler) HandleExtract(c *gin.Context) {
 			return
 		}
 	}
+	if err := validateScrapeOptions(req.ScrapeOptions, h.Config.DemoMode, h.LLMEnabled && h.Extractor != nil, scraper.BrowserAvailable()); err != nil {
+		writeScrapeValidationError(c, err)
+		return
+	}
 	if h.Config.DemoMode || !h.LLMEnabled || h.Extractor == nil {
 		writeProviderUnavailable(c, "extract is not configured")
 		return
 	}
-	job := &store.V2Job{Kind: store.KindExtract, URL: req.URLs[0], Request: mustJSON(req)}
-	id, err := h.Store.CreateV2Job(c.Request.Context(), job)
+	tmpID := uuid.New()
+	obPayload, _ := json.Marshal(queue.StreamPayload{JobID: tmpID.String(), Kind: store.KindExtract, URL: req.URLs[0]})
+	job := &store.V2Job{ID: tmpID, Kind: store.KindExtract, URL: req.URLs[0], Request: mustJSON(req)}
+	id, err := h.Store.CreateV2JobQueued(c.Request.Context(), job, store.OutboxEntry{Stream: queue.StreamDefault, Payload: obPayload})
 	if err != nil {
 		writeError(c, 500, CodeUnknown, "failed to create extract")
 		return
 	}
-	if err := h.Queue.PublishStream(c.Request.Context(), queue.StreamDefault, queue.StreamPayload{
-		JobID: id.String(), Kind: store.KindExtract, URL: req.URLs[0],
-	}); err != nil {
-		msg := "failed to queue extract"
-		_ = h.Store.UpdateV2Job(c.Request.Context(), id, "failed", nil, &msg, nil, 0, nil)
-		writeError(c, 500, CodeUnknown, msg)
-		return
-	}
+	_ = h.dispatchOutbox(c.Request.Context())
 	c.Header("Deprecation", "true")
 	resp := gin.H{"success": true, "id": id.String()}
 	if len(invalid) > 0 {
@@ -123,7 +123,7 @@ func (h *Handler) HandleExtractStatus(c *gin.Context) {
 		expiresAt = job.CompletedAt.Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	}
 	resp := gin.H{
-		"success": status != "failed", "status": status,
+		"success": status != "failed" && status != "cancelled", "status": status,
 		"expiresAt": expiresAt,
 	}
 	if status == "completed" && len(job.Result) > 0 {
@@ -132,8 +132,11 @@ func (h *Handler) HandleExtractStatus(c *gin.Context) {
 			resp["data"] = data
 		}
 	}
-	if status == "failed" {
+	switch status {
+	case "failed":
 		resp["error"] = stringOr(job.ErrorMsg, "extract failed")
+	case "cancelled":
+		resp["error"] = stringOr(job.ErrorMsg, "extract cancelled")
 	}
 	c.Header("Deprecation", "true")
 	c.JSON(http.StatusOK, resp)
@@ -151,14 +154,19 @@ func (h *Handler) HandleParseFormats(c *gin.Context) {
 }
 
 func (h *Handler) HandleConcurrency(c *gin.Context) {
-	n, err := h.Store.InFlightCount(c.Request.Context())
-	if err != nil {
-		writeError(c, 500, CodeUnknown, "failed to read concurrency")
-		return
-	}
 	max := h.Config.MaxConcurrentJobs
 	if max <= 0 {
 		max = 5
+	}
+	n := 0
+	if h.Queue != nil {
+		if v, err := h.Queue.ConcurrencyCount(c.Request.Context()); err == nil {
+			n = v
+		} else if v, err := h.Store.InFlightCount(c.Request.Context()); err == nil {
+			n = v
+		}
+	} else if v, err := h.Store.InFlightCount(c.Request.Context()); err == nil {
+		n = v
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "concurrency": n, "maxConcurrency": max})
 }

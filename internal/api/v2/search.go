@@ -105,8 +105,11 @@ func (h *Handler) HandleSearch(c *gin.Context) {
 			writeBadRequest(c, "search scrapeOptions do not support browser actions or waitFor")
 			return
 		}
-		if req.ScrapeOptions.Timeout < 0 || req.ScrapeOptions.Timeout > 120000 {
-			writeBadRequest(c, "scrapeOptions.timeout must be between 0 and 120000 milliseconds")
+		if req.ScrapeOptions.Timeout == 0 {
+			req.ScrapeOptions.Timeout = 30000
+		}
+		if req.ScrapeOptions.Timeout < 1000 || req.ScrapeOptions.Timeout > 120000 {
+			writeBadRequest(c, "scrapeOptions.timeout must be between 1000 and 120000 milliseconds")
 			return
 		}
 	}

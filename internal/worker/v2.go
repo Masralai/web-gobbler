@@ -33,6 +33,7 @@ type V2Worker struct {
 	LLM              bool
 	WebhookSecret    string
 	RetentionMinutes int
+	MaxConcurrent    int
 }
 
 func (w *V2Worker) Run(ctx context.Context, capability string, concurrency int) {
@@ -88,15 +89,56 @@ func (w *V2Worker) process(ctx context.Context, msg queue.StreamMessage) error {
 	if err != nil {
 		return w.Queue.Ack(ctx, queue.StreamDefault, "workers", msg.ID)
 	}
+	max := w.MaxConcurrent
+	if max <= 0 {
+		max = 5
+	}
+	leaseMember := "job:" + id.String()
+	if w.Queue != nil {
+		ok, err := w.Queue.ConcurrencyAcquire(ctx, leaseMember, max, 90*time.Second)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			// ponytail: no cluster slot; leave unacked for reclaim after idle timeout.
+			return fmt.Errorf("concurrency limit reached")
+		}
+	}
+	release := func() {
+		if w.Queue != nil {
+			_ = w.Queue.ConcurrencyRelease(context.Background(), leaseMember)
+		}
+	}
+	stopRenew := make(chan struct{})
+	if w.Queue != nil {
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-stopRenew:
+					return
+				case <-t.C:
+					_ = w.Queue.ConcurrencyRenew(context.Background(), leaseMember, 90*time.Second)
+				}
+			}
+		}()
+	}
 	claimed, err := w.Store.SetV2Processing(ctx, id)
 	if err != nil {
+		close(stopRenew)
+		release()
 		return err
 	}
 	if !claimed {
+		close(stopRenew)
+		release()
 		return nil
 	}
 	job, err := w.Store.GetV2Job(ctx, id)
 	if err != nil {
+		close(stopRenew)
+		release()
 		return err
 	}
 	start := time.Now()
@@ -118,8 +160,12 @@ func (w *V2Worker) process(ctx context.Context, msg queue.StreamMessage) error {
 		if job.Kind == store.KindExtract {
 			w.deliver(ctx, job, "extract.failed", map[string]any{"success": false, "error": msgText})
 		}
+		close(stopRenew)
+		release()
 		return err
 	}
+	close(stopRenew)
+	release()
 	return nil
 }
 
@@ -480,11 +526,11 @@ func (w *V2Worker) processExtract(ctx context.Context, job *store.V2Job) error {
 }
 
 func (w *V2Worker) maybeCompleteBatch(ctx context.Context, parent uuid.UUID) error {
-	_, processing, queued, total, err := w.Store.V2ChildCounts(ctx, parent)
+	_, processing, queued, all, err := w.Store.V2ChildCounts(ctx, parent)
 	if err != nil {
 		return err
 	}
-	if total == 0 || processing > 0 || queued > 0 {
+	if all == 0 || processing > 0 || queued > 0 {
 		return nil
 	}
 	p, err := w.Store.GetV2Job(ctx, parent)
@@ -522,6 +568,7 @@ func (w *V2Worker) reaper(ctx context.Context) {
 			return
 		case <-ticker.C:
 			tick++
+			w.dispatchOutbox(ctx)
 			if tick%20 == 0 {
 				retention := w.RetentionMinutes
 				if retention < 1 {
@@ -546,6 +593,27 @@ func (w *V2Worker) reaper(ctx context.Context) {
 				_ = w.Queue.PublishStream(ctx, stream, payload)
 			}
 		}
+	}
+}
+
+func (w *V2Worker) dispatchOutbox(ctx context.Context) {
+	if w.Store == nil || w.Queue == nil {
+		return
+	}
+	rows, err := w.Store.ListUnsentOutbox(ctx, 100)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		var p queue.StreamPayload
+		if err := json.Unmarshal(r.Payload, &p); err != nil {
+			_ = w.Store.MarkOutboxSent(ctx, r.ID)
+			continue
+		}
+		if err := w.Queue.PublishStream(ctx, r.Stream, p); err != nil {
+			return
+		}
+		_ = w.Store.MarkOutboxSent(ctx, r.ID)
 	}
 }
 

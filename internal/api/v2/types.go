@@ -170,27 +170,28 @@ func (w *Webhook) UnmarshalJSON(data []byte) error {
 }
 
 type CrawlRequest struct {
-	URL                    string         `json:"url"`
-	Limit                  *int           `json:"limit,omitempty"`
-	MaxDiscoveryDepth      *int           `json:"maxDiscoveryDepth,omitempty"`
-	MaxDepth               *int           `json:"maxDepth,omitempty"`
-	IncludePaths           []string       `json:"includePaths,omitempty"`
-	ExcludePaths           []string       `json:"excludePaths,omitempty"`
-	AllowSubdomains        bool           `json:"allowSubdomains,omitempty"`
-	CrawlEntireDomain      bool           `json:"crawlEntireDomain,omitempty"`
-	AllowExternalLinks     bool           `json:"allowExternalLinks,omitempty"`
-	IgnoreRobotsTxt        bool           `json:"ignoreRobotsTxt,omitempty"`
-	RobotsUserAgent        string         `json:"robotsUserAgent,omitempty"`
-	Sitemap                string         `json:"sitemap,omitempty"`
-	DeduplicateSimilarURLs *bool          `json:"deduplicateSimilarURLs,omitempty"`
-	IgnoreQueryParameters  *bool          `json:"ignoreQueryParameters,omitempty"`
-	RegexOnFullURL         *bool          `json:"regexOnFullURL,omitempty"`
-	Delay                  int            `json:"delay,omitempty"`
-	MaxConcurrency         int            `json:"maxConcurrency,omitempty"`
-	ScrapeOptions          *ScrapeOptions `json:"scrapeOptions,omitempty"`
-	Webhook                *Webhook       `json:"webhook,omitempty"`
-	Origin                 string         `json:"origin,omitempty"`
-	Integration            *string        `json:"integration,omitempty"`
+	URL                    string          `json:"url"`
+	Limit                  *int            `json:"limit,omitempty"`
+	MaxDiscoveryDepth      *int            `json:"maxDiscoveryDepth,omitempty"`
+	MaxDepth               *int            `json:"maxDepth,omitempty"`
+	IncludePaths           []string        `json:"includePaths,omitempty"`
+	ExcludePaths           []string        `json:"excludePaths,omitempty"`
+	AllowSubdomains        bool            `json:"allowSubdomains,omitempty"`
+	CrawlEntireDomain      bool            `json:"crawlEntireDomain,omitempty"`
+	AllowExternalLinks     bool            `json:"allowExternalLinks,omitempty"`
+	IgnoreRobotsTxt        bool            `json:"ignoreRobotsTxt,omitempty"`
+	RobotsUserAgent        string          `json:"robotsUserAgent,omitempty"`
+	Sitemap                string          `json:"sitemap,omitempty"`
+	DeduplicateSimilarURLs *bool           `json:"deduplicateSimilarURLs,omitempty"`
+	IgnoreQueryParameters  *bool           `json:"ignoreQueryParameters,omitempty"`
+	RegexOnFullURL         *bool           `json:"regexOnFullURL,omitempty"`
+	Delay                  int             `json:"delay,omitempty"`
+	MaxConcurrency         int             `json:"maxConcurrency,omitempty"`
+	ScrapeOptions          *ScrapeOptions  `json:"scrapeOptions,omitempty"`
+	Webhook                *Webhook        `json:"webhook,omitempty"`
+	Origin                 string          `json:"origin,omitempty"`
+	Integration            *string         `json:"integration,omitempty"`
+	Prompt                 json.RawMessage `json:"prompt,omitempty"`
 }
 
 type BatchRequest struct {

@@ -75,6 +75,10 @@ func (h *Handler) HandleCrawl(c *gin.Context) {
 		writeBadRequest(c, err.Error())
 		return
 	}
+	if err := validateScrapeOptions(req.ScrapeOptions, h.Config.DemoMode, h.LLMEnabled && h.Extractor != nil, scraper.BrowserAvailable()); err != nil {
+		writeScrapeValidationError(c, err)
+		return
+	}
 
 	key := c.GetHeader("x-idempotency-key")
 	if key != "" && len(key) > 256 {
@@ -82,8 +86,10 @@ func (h *Handler) HandleCrawl(c *gin.Context) {
 		return
 	}
 
-	job := &store.V2Job{Kind: store.KindCrawl, URL: req.URL, Request: mustJSON(req), Webhook: mustJSON(req.Webhook)}
-	id, conflict, err := h.Store.CreateV2JobWithIdempotency(c.Request.Context(), job, key)
+	tmpID := uuid.New()
+	obPayload, _ := json.Marshal(queue.StreamPayload{JobID: tmpID.String(), Kind: store.KindCrawl, URL: req.URL})
+	job := &store.V2Job{ID: tmpID, Kind: store.KindCrawl, URL: req.URL, Request: mustJSON(req), Webhook: mustJSON(req.Webhook)}
+	id, conflict, err := h.Store.CreateV2JobWithIdempotency(c.Request.Context(), job, key, store.OutboxEntry{Stream: queue.StreamDefault, Payload: obPayload})
 	if err != nil {
 		writeError(c, 500, CodeUnknown, "failed to create crawl")
 		return
@@ -92,14 +98,8 @@ func (h *Handler) HandleCrawl(c *gin.Context) {
 		writeError(c, http.StatusConflict, CodeIdempotencyReused, "Idempotency key already used")
 		return
 	}
-	if err := h.Queue.PublishStream(c.Request.Context(), queue.StreamDefault, queue.StreamPayload{
-		JobID: id.String(), Kind: store.KindCrawl, URL: req.URL,
-	}); err != nil {
-		msg := "failed to queue crawl"
-		_ = h.Store.UpdateV2Job(c.Request.Context(), id, "failed", nil, &msg, nil, 0, nil)
-		writeError(c, 500, CodeUnknown, msg)
-		return
-	}
+	// outbox dispatcher publishes; best-effort immediate dispatch if worker lagging.
+	_ = h.dispatchOutbox(c.Request.Context())
 	c.JSON(http.StatusOK, gin.H{"success": true, "id": id.String(), "url": h.baseURL(c) + "/v2/crawl/" + id.String()})
 }
 
@@ -113,10 +113,14 @@ func (h *Handler) HandleCrawlStatus(c *gin.Context) {
 		writeNotFound(c, "Job not found")
 		return
 	}
-	completed, _, _, total, err := h.Store.V2ChildCounts(c.Request.Context(), id)
+	completed, processing, queued, all, err := h.Store.V2ChildCounts(c.Request.Context(), id)
 	if err != nil {
 		writeError(c, 500, CodeUnknown, "failed to read crawl")
 		return
+	}
+	total := completed + processing + queued
+	if job.Kind == store.KindBatch {
+		total = all // REQ-003b: counts every accepted URL
 	}
 	skip, _ := atoiDefault(c.Query("skip"), 0)
 	limit, _ := atoiDefault(c.Query("limit"), 100)
@@ -131,15 +135,26 @@ func (h *Handler) HandleCrawlStatus(c *gin.Context) {
 		writeError(c, 500, CodeUnknown, "failed to read crawl pages")
 		return
 	}
+	// REQ-002c: page <=100 docs and <=10 MiB JSON; a single document always returned even if >10 MiB.
+	const maxCrawlPageBytes = 10 << 20
 	data := make([]Document, 0, len(children))
+	pageBytes := 0
+	returned := 0
 	for _, ch := range children {
-		if len(ch.Result) == 0 {
+		docSize := len(ch.Result)
+		if returned > 0 && docSize > 0 && pageBytes+docSize > maxCrawlPageBytes {
+			break
+		}
+		returned++
+		if docSize == 0 {
 			continue
 		}
 		var doc Document
-		if json.Unmarshal(ch.Result, &doc) == nil {
-			data = append(data, doc)
+		if err := json.Unmarshal(ch.Result, &doc); err != nil {
+			continue
 		}
+		data = append(data, doc)
+		pageBytes += docSize
 	}
 	status := wireStatus(job.Status)
 	if job.Status == "failed" {
@@ -164,8 +179,8 @@ func (h *Handler) HandleCrawlStatus(c *gin.Context) {
 		return
 	}
 	next := ""
-	if skip+len(data) < completed {
-		next = fmt.Sprintf("%s/v2/%s?skip=%d&limit=%d", h.baseURL(c), crawlPath(c), skip+len(data), limit)
+	if skip+returned < completed {
+		next = fmt.Sprintf("%s/v2/%s?skip=%d&limit=%d", h.baseURL(c), crawlPath(c), skip+returned, limit)
 	}
 	resp := CrawlStatusResponse{
 		Success: true, Status: status, Completed: completed, Total: total,

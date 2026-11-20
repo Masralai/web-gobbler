@@ -61,6 +61,14 @@ func (h *Handler) HandleParse(c *gin.Context) {
 			writeBadRequest(c, "options must be a JSON object with supported parse fields")
 			return
 		}
+		if len(opts.Formats) > 0 {
+			for _, f := range opts.Formats {
+				if f.Type != "markdown" {
+					writeError(c, http.StatusBadRequest, CodeUnsupportedOptions, "parse options.formats supports only markdown")
+					return
+				}
+			}
+		}
 		if len(opts.Actions) > 0 || len(opts.Screenshot) > 0 || len(opts.Branding) > 0 || len(opts.ChangeTracking) > 0 || opts.WaitFor > 0 || len(opts.Location) > 0 || len(opts.Mobile) > 0 {
 			writeError(c, http.StatusBadRequest, CodeUnsupportedOptions, "parse does not support actions, screenshot, branding, changeTracking, waitFor > 0, location, or mobile")
 			return
